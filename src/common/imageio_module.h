@@ -49,7 +49,7 @@ typedef enum dt_imageio_format_flags_t
  */
 
 /*
- * custom data for the module. append private stuff after width and height.
+ * custom data for the module. append private stuff after these.
  * this will be inited once when the export button is hit, so the user can make
  * gui adjustments that won't affect the currently running export.
  */
@@ -190,6 +190,8 @@ typedef struct dt_imageio_module_storage_t
   int (*set_params)(struct dt_imageio_module_storage_t *self, const void *params, const int size);
 
   void (*export_dispatched)(struct dt_imageio_module_storage_t *self);
+  
+  char *(*ask_user_confirmation)(struct dt_imageio_module_storage_t *self);
 
   luaA_Type parameter_lua_type;
 } dt_imageio_module_storage_t;

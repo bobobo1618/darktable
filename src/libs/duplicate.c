@@ -31,6 +31,8 @@
 #include "gui/gtk.h"
 #include "gui/styles.h"
 
+#define DUPLICATE_COMPARE_SIZE 40
+
 DT_MODULE(1)
 
 typedef enum _lib_duplicate_select_t
@@ -44,7 +46,19 @@ typedef struct dt_lib_duplicate_t
 {
   GtkWidget *duplicate_box;
   int imgid;
+  gboolean busy;
+  int cur_final_width;
+  int cur_final_height;
+  gboolean allow_zoom;
+
   dt_lib_duplicate_select_t select;
+
+  int32_t buf_width;
+  int32_t buf_height;
+  cairo_surface_t *surface;
+  uint8_t *rgbbuf;
+  int buf_mip;
+  int buf_timestamp;
 } dt_lib_duplicate_t;
 
 const char *name(dt_lib_module_t *self)
@@ -141,27 +155,20 @@ static void _lib_duplicate_thumb_press_callback(GtkWidget *widget, GdkEventButto
     {
       dt_develop_t *dev = darktable.develop;
       if(!dev) return;
-      dt_dev_zoom_t zoom;
-      int closeup;
-      float zoom_x, zoom_y;
-      closeup = dt_control_get_dev_closeup();
-      float scale = 0;
 
-      zoom = DT_ZOOM_FIT;
-      scale = dt_dev_get_zoom_scale(dev, DT_ZOOM_FIT, 1.0, 0);
-
-      dt_dev_check_zoom_bounds(dev, &zoom_x, &zoom_y, zoom, closeup, NULL, NULL);
-      dt_control_set_dev_zoom_scale(scale);
-      dt_control_set_dev_zoom(zoom);
-      dt_control_set_dev_closeup(closeup);
-      dt_control_set_dev_zoom_x(zoom_x);
-      dt_control_set_dev_zoom_y(zoom_y);
       dt_dev_invalidate(dev);
       dt_control_queue_redraw();
 
       dt_dev_invalidate(darktable.develop);
 
       d->imgid = imgid;
+      int fw, fh;
+      fw = fh = 0;
+      dt_image_get_final_size(imgid, &fw, &fh);
+      d->allow_zoom
+          = (d->cur_final_width - fw < DUPLICATE_COMPARE_SIZE && d->cur_final_width - fw > -DUPLICATE_COMPARE_SIZE
+             && d->cur_final_height - fh < DUPLICATE_COMPARE_SIZE
+             && d->cur_final_height - fh > -DUPLICATE_COMPARE_SIZE);
       dt_control_queue_redraw_center();
     }
     else if(event->type == GDK_2BUTTON_PRESS)
@@ -177,6 +184,8 @@ static void _lib_duplicate_thumb_release_callback(GtkWidget *widget, GdkEventBut
   dt_lib_duplicate_t *d = (dt_lib_duplicate_t *)self->data;
 
   d->imgid = 0;
+  if(d->busy) dt_control_log_busy_leave();
+  d->busy = FALSE;
   dt_control_queue_redraw_center();
 }
 
@@ -190,31 +199,42 @@ void gui_post_expose(dt_lib_module_t *self, cairo_t *cri, int32_t width, int32_t
   int nw = width-2*tb;
   int nh = height-2*tb;
 
-  dt_mipmap_buffer_t buf;
-  dt_mipmap_size_t mip = dt_mipmap_cache_get_matching_size(darktable.mipmap_cache, nw, nh);
-  dt_mipmap_cache_get(darktable.mipmap_cache, &buf, d->imgid, mip, DT_MIPMAP_BEST_EFFORT, 'r');
+  dt_develop_t *dev = darktable.develop;
+  if(!dev->preview_pipe->backbuf || dev->preview_status != DT_DEV_PIXELPIPE_VALID) return;
 
-  int img_wd = buf.width;
-  int img_ht = buf.height;
-
-  dt_mipmap_cache_release(darktable.mipmap_cache, &buf);
+  int img_wd = dev->preview_pipe->backbuf_width;
+  int img_ht = dev->preview_pipe->backbuf_height;
 
   // and now we get the values to "fit the screen"
-  int px,py,nimgw,nimgh;
+  int nimgw, nimgh;
   if (img_ht*nw > img_wd*nh)
   {
     nimgh = nh;
     nimgw = img_wd*nh/img_ht;
-    py=0;
-    px=(nw-nimgw)/2;
   }
   else
   {
     nimgw = nw;
     nimgh = img_ht*nw/img_wd;
-    px=0;
-    py=(nh-nimgh)/2;
   }
+
+  // if image have too different sizes, we show the full preview not zoomed
+  float zoom_x = 0.0f;
+  float zoom_y = 0.0f;
+  float nz = 1.0f;
+  if(d->allow_zoom)
+  {
+    dt_dev_zoom_t zoom = dt_control_get_dev_zoom();
+    const int closeup = dt_control_get_dev_closeup();
+    zoom_x = dt_control_get_dev_zoom_x();
+    zoom_y = dt_control_get_dev_zoom_y();
+    const float min_scale = dt_dev_get_zoom_scale(dev, DT_ZOOM_FIT, 1 << closeup, 0);
+    const float cur_scale = dt_dev_get_zoom_scale(dev, zoom, 1 << closeup, 0);
+    nz = cur_scale / min_scale;
+  }
+
+  const float zx = zoom_x * nz * (float)(nimgw + 1.0f);
+  const float zy = zoom_y * nz * (float)(nimgh + 1.0f);
 
   // we erase everything
   dt_gui_gtk_set_source_rgb(cri, DT_GUI_COLOR_DARKROOM_BG);
@@ -222,17 +242,39 @@ void gui_post_expose(dt_lib_module_t *self, cairo_t *cri, int32_t width, int32_t
 
   //we draw the cached image
   dt_view_image_over_t image_over = DT_VIEW_DESERT;
-  dt_view_image_expose(&image_over, d->imgid, cri, nw, nh, 1, px+tb, py+tb, TRUE, TRUE);
+  dt_view_image_expose_t params = { 0 };
+  params.image_over = &image_over;
+  params.imgid = d->imgid;
+  params.cr = cri;
+  params.width = width;
+  params.height = height;
+  params.zoom = 1;
+  params.full_preview = TRUE;
+  params.no_deco = TRUE;
+  params.full_zoom = nz;
+  params.full_x = -zx + 1.0f;
+  params.full_y = -zy + 1.0f;
 
-  //and the nice border line
-  cairo_rectangle(cri, tb+px, tb+py, nimgw, nimgh);
-  cairo_set_line_width(cri, 1.0);
-  cairo_set_source_rgb(cri, .3, .3, .3);
-  cairo_stroke(cri);
+
+  const int res = dt_view_image_expose(&params);
+
+  if(res)
+  {
+    if(!d->busy) dt_control_log_busy_enter();
+    d->busy = TRUE;
+  }
+  else
+  {
+    if(d->busy) dt_control_log_busy_leave();
+    d->busy = FALSE;
+  }
 }
 
 static gboolean _lib_duplicate_thumb_draw_callback (GtkWidget *widget, cairo_t *cr, dt_lib_module_t *self)
 {
+  dt_lib_duplicate_t *d = (dt_lib_duplicate_t *)self->data;
+  dt_develop_t *dev = darktable.develop;
+
   guint width, height;
   width = gtk_widget_get_allocated_width (widget);
   height = gtk_widget_get_allocated_height (widget);
@@ -241,9 +283,70 @@ static gboolean _lib_duplicate_thumb_draw_callback (GtkWidget *widget, cairo_t *
 
   int imgid = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(widget),"imgid"));
   dt_view_image_over_t image_over = DT_VIEW_DESERT;
-  dt_view_image_expose(&image_over, imgid, cr, width, height, 5, 0, 0, FALSE, FALSE);
+  dt_view_image_expose_t params = { 0 };
+  params.image_over = &image_over;
+  params.imgid = imgid;
+  params.cr = cr;
+  params.width = width;
+  params.height = height;
+  params.zoom = 5;
+  params.full_preview = TRUE;
 
- return FALSE;
+  int lk = 0;
+  // if this is the actual thumb, we want to use the preview pipe
+  if(imgid == dev->image_storage.id)
+  {
+    // we recreate the surface if needed
+    if(dev->preview_pipe->backbuf && dev->preview_status == DT_DEV_PIXELPIPE_VALID)
+    {
+      /* re-allocate in case of changed image dimensions */
+      if(d->rgbbuf == NULL || dev->preview_pipe->backbuf_width != d->buf_width
+         || dev->preview_pipe->backbuf_height != d->buf_height)
+      {
+        if(d->surface)
+        {
+          cairo_surface_destroy(d->surface);
+          d->surface = NULL;
+        }
+        g_free(d->rgbbuf);
+        d->buf_width = dev->preview_pipe->backbuf_width;
+        d->buf_height = dev->preview_pipe->backbuf_height;
+        d->rgbbuf = g_malloc0((size_t)d->buf_width * d->buf_height * 4 * sizeof(unsigned char));
+      }
+
+      /* update buffer if new data is available */
+      if(d->rgbbuf && dev->preview_pipe->input_timestamp > d->buf_timestamp)
+      {
+        if(d->surface)
+        {
+          cairo_surface_destroy(d->surface);
+          d->surface = NULL;
+        }
+
+        dt_pthread_mutex_t *mutex = &dev->preview_pipe->backbuf_mutex;
+        dt_pthread_mutex_lock(mutex);
+        memcpy(d->rgbbuf, dev->preview_pipe->backbuf,
+               (size_t)d->buf_width * d->buf_height * 4 * sizeof(unsigned char));
+        d->buf_timestamp = dev->preview_pipe->input_timestamp;
+        dt_pthread_mutex_unlock(mutex);
+
+        const int stride = cairo_format_stride_for_width(CAIRO_FORMAT_RGB24, d->buf_width);
+        d->surface = cairo_image_surface_create_for_data(d->rgbbuf, CAIRO_FORMAT_RGB24, d->buf_width,
+                                                         d->buf_height, stride);
+      }
+    }
+    params.full_surface = &(d->surface);
+    params.full_rgbbuf = &(d->rgbbuf);
+    params.full_surface_mip = &(d->buf_mip);
+    params.full_surface_id = &imgid;
+    params.full_surface_wd = &d->buf_width;
+    params.full_surface_ht = &d->buf_height;
+    params.full_surface_w_lock = &lk;
+  }
+
+  dt_view_image_expose(&params);
+
+  return FALSE;
 }
 
 static void _lib_duplicate_init_callback(gpointer instance, dt_lib_module_t *self)
@@ -303,11 +406,10 @@ static void _lib_duplicate_init_callback(gpointer instance, dt_lib_module_t *sel
     GtkWidget *lb = gtk_label_new (g_strdup(chl));
     bt = dtgtk_button_new(dtgtk_cairo_paint_cancel, CPF_STYLE_FLAT | CPF_DO_NOT_USE_BORDER, NULL);
     g_object_set_data(G_OBJECT(bt), "imgid", GINT_TO_POINTER(imgid));
-    gtk_widget_set_size_request(bt, DT_PIXEL_APPLY_DPI(13), DT_PIXEL_APPLY_DPI(13));
     g_signal_connect(G_OBJECT(bt), "clicked", G_CALLBACK(_lib_duplicate_delete), self);
 
     gtk_box_pack_start(GTK_BOX(hb), dr, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(hb), tb, FALSE, FALSE, 5);
+    gtk_box_pack_start(GTK_BOX(hb), tb, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(hb), lb, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(hb), bt, FALSE, FALSE, 0);
 
@@ -338,11 +440,19 @@ static void _lib_duplicate_init_callback(gpointer instance, dt_lib_module_t *sel
     gtk_widget_set_sensitive(bt, FALSE);
     gtk_widget_set_visible(bt, FALSE);
   }
+
+  // and we store the final size of the current image
+  if(dev->image_storage.id >= 0)
+    dt_image_get_final_size(dev->image_storage.id, &d->cur_final_width, &d->cur_final_height);
 }
 
 static void _lib_duplicate_mipmap_updated_callback(gpointer instance, dt_lib_module_t *self)
 {
   dt_lib_duplicate_t *d = (dt_lib_duplicate_t *)self->data;
+  // we store the final size of the current image
+  if(darktable.develop->image_storage.id >= 0)
+    dt_image_get_final_size(darktable.develop->image_storage.id, &d->cur_final_width, &d->cur_final_height);
+
   gtk_widget_queue_draw (d->duplicate_box);
   dt_control_queue_redraw_center();
 }
@@ -354,8 +464,14 @@ void gui_init(dt_lib_module_t *self)
   self->data = (void *)d;
 
   d->imgid = 0;
+  d->buf_height = 0;
+  d->buf_width = 0;
+  d->rgbbuf = NULL;
+  d->surface = NULL;
+  d->buf_timestamp = 0;
+  d->buf_mip = dt_mipmap_cache_get_matching_size(darktable.mipmap_cache, 100, 100);
 
-  self->widget = gtk_box_new(GTK_ORIENTATION_VERTICAL, DT_PIXEL_APPLY_DPI(5));
+  self->widget = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
   gtk_widget_set_name(self->widget, "duplicate-ui");
   dt_gui_add_help_link(self->widget, dt_get_help_url(self->plugin_name));
 
@@ -390,6 +506,8 @@ void gui_init(dt_lib_module_t *self)
                             G_CALLBACK(_lib_duplicate_init_callback), self);
   dt_control_signal_connect(darktable.signals, DT_SIGNAL_DEVELOP_MIPMAP_UPDATED, G_CALLBACK(_lib_duplicate_mipmap_updated_callback), (gpointer)self);
   dt_control_signal_connect(darktable.signals, DT_SIGNAL_FILMROLLS_CHANGED, G_CALLBACK(_lib_duplicate_filmrolls_updated), self);
+  dt_control_signal_connect(darktable.signals, DT_SIGNAL_DEVELOP_PREVIEW_PIPE_FINISHED,
+                            G_CALLBACK(_lib_duplicate_mipmap_updated_callback), self);
 }
 
 void gui_cleanup(dt_lib_module_t *self)

@@ -138,6 +138,11 @@ int default_group()
   return IOP_GROUP_EFFECT;
 }
 
+int default_colorspace(dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, dt_dev_pixelpipe_iop_t *piece)
+{
+  return iop_cs_Lab;
+}
+
 int legacy_params(dt_iop_module_t *self, const void *const old_params, const int old_version,
                   void *new_params, const int new_version)
 {
@@ -598,7 +603,6 @@ void init(dt_iop_module_t *module)
   module->params = calloc(1, sizeof(dt_iop_lowpass_params_t));
   module->default_params = calloc(1, sizeof(dt_iop_lowpass_params_t));
   module->default_enabled = 0;
-  module->priority = 757; // module order created by iop_dependencies.py, do not edit!
   module->params_size = sizeof(dt_iop_lowpass_params_t);
   module->gui_data = NULL;
   dt_iop_lowpass_params_t tmp = (dt_iop_lowpass_params_t){ 0, 10.0f, 1.0f, 0.0f, 1.0f, LOWPASS_ALGO_GAUSSIAN, 1 };
@@ -651,7 +655,7 @@ void gui_init(struct dt_iop_module_t *self)
   dt_gui_add_help_link(self->widget, dt_get_help_url(self->op));
 
 #if 0 // gaussian is order not user selectable here, as it does not make much sense for a lowpass filter
-  GtkBox *hbox  = GTK_BOX(gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5));
+  GtkBox *hbox  = GTK_BOX(gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0));
   gtk_box_pack_start(GTK_BOX(self->widget), GTK_WIDGET(hbox), FALSE, FALSE, 0);
   GtkWidget *label = dtgtk_reset_label_new(_("filter order"), self, &p->order, sizeof(float));
   gtk_box_pack_start(hbox, label, FALSE, FALSE, 0);

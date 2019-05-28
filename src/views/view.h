@@ -46,7 +46,7 @@
     control which view the module should be available in also
     which placement in the panels the module have.
 */
-typedef enum 
+typedef enum
 {
   DT_VIEW_LIGHTTABLE = 1,
   DT_VIEW_DARKROOM = 2,
@@ -63,6 +63,22 @@ typedef enum dt_view_flags_t
   VIEW_FLAGS_NONE = 0,
   VIEW_FLAGS_HIDDEN = 1 << 0,       // Hide the view from userinterface
 } dt_view_flags_t;
+
+typedef enum dt_lighttable_layout_t
+{
+  DT_LIGHTTABLE_LAYOUT_FIRST = -1,
+  DT_LIGHTTABLE_LAYOUT_ZOOMABLE = 0,
+  DT_LIGHTTABLE_LAYOUT_FILEMANAGER = 1,
+  DT_LIGHTTABLE_LAYOUT_CULLING = 2,
+  DT_LIGHTTABLE_LAYOUT_LAST = 3
+} dt_lighttable_layout_t;
+
+// flags for culling zoom mode
+typedef enum dt_lighttable_culling_zoom_mode_t
+{
+  DT_LIGHTTABLE_ZOOM_FIXED = 0,
+  DT_LIGHTTABLE_ZOOM_DYNAMIC = 1
+} dt_lighttable_culling_zoom_mode_t;
 
 #define DT_VIEW_ALL                                                                              \
   (DT_VIEW_LIGHTTABLE | DT_VIEW_DARKROOM | DT_VIEW_TETHERING | DT_VIEW_MAP | DT_VIEW_SLIDESHOW | \
@@ -118,10 +134,12 @@ typedef struct dt_view_t
   void (*connect_key_accels)(struct dt_view_t *self);
 
   GSList *accel_closures;
+  struct dt_accel_dynamic_t *dynamic_accel_current;
 } dt_view_t;
 
 typedef enum dt_view_image_over_t
 {
+  DT_VIEW_ERR = -1,
   DT_VIEW_DESERT = 0,
   DT_VIEW_STAR_1 = 1,
   DT_VIEW_STAR_2 = 2,
@@ -130,16 +148,51 @@ typedef enum dt_view_image_over_t
   DT_VIEW_STAR_5 = 5,
   DT_VIEW_REJECT = 6,
   DT_VIEW_GROUP = 7,
-  DT_VIEW_AUDIO = 8
+  DT_VIEW_AUDIO = 8,
+  DT_VIEW_ALTERED = 9,
+  DT_VIEW_END = 10 // placeholder for the end of the list
 } dt_view_image_over_t;
 
 /** returns -1 if the action has to be applied to the selection,
     or the imgid otherwise */
 int32_t dt_view_get_image_to_act_on();
 
+/** guess the image_over flag assuming that all possible controls are displayed */
+dt_view_image_over_t dt_view_guess_image_over(int32_t width, int32_t height, int32_t zoom, int32_t px, int32_t py);
+
+typedef struct dt_view_image_expose_t
+{
+  dt_view_image_over_t *image_over;
+  uint32_t imgid;
+  cairo_t *cr;
+  int32_t width;
+  int32_t height;
+  int32_t zoom;
+  int32_t px;
+  int32_t py;
+  gboolean full_preview;
+  gboolean image_only;
+  gboolean no_deco;
+  gboolean mouse_over;
+  float full_zoom;
+  float full_zoom100;
+  float *full_w1;
+  float *full_h1;
+  float full_x;
+  float full_y;
+  float *full_maxdx;
+  float *full_maxdy;
+
+  cairo_surface_t **full_surface;
+  uint8_t **full_rgbbuf;
+  int *full_surface_mip;
+  int *full_surface_id;
+  int *full_surface_wd;
+  int *full_surface_ht;
+  int *full_surface_w_lock;
+} dt_view_image_expose_t;
 /** expose an image, set image over flags. return != 0 if thumbnail wasn't loaded yet. */
-int dt_view_image_expose(dt_view_image_over_t *image_over, uint32_t index, cairo_t *cr, int32_t width,
-                         int32_t height, int32_t zoom, int32_t px, int32_t py, gboolean full_preview, gboolean image_only);
+int dt_view_image_expose(dt_view_image_expose_t *vals);
 
 /* expose only the image imgid at position (offsetx,offsety) into the cairo surface occupying width/height pixels.
    this routine does not output any meta-data as the version above.
@@ -238,10 +291,16 @@ typedef struct dt_view_manager_t
       struct dt_lib_module_t *module;
       struct dt_view_t *view;
       void (*set_zoom)(struct dt_lib_module_t *module, gint zoom);
+      gint (*get_zoom)(struct dt_lib_module_t *module);
+      dt_lighttable_layout_t (*get_layout)(struct dt_lib_module_t *module);
+      void (*set_layout)(struct dt_lib_module_t *module, dt_lighttable_layout_t layout);
+      dt_lighttable_culling_zoom_mode_t (*get_zoom_mode)(struct dt_lib_module_t *module);
       void (*set_position)(struct dt_view_t *view, uint32_t pos);
       uint32_t (*get_position)(struct dt_view_t *view);
       int (*get_images_in_row)(struct dt_view_t *view);
       int (*get_full_preview_id)(struct dt_view_t *view);
+      void (*force_expose_all)(struct dt_view_t *view);
+      gboolean (*culling_is_image_visible)(struct dt_view_t *view, gint imgid);
     } lighttable;
 
     /* tethering view proxy object */
@@ -259,6 +318,12 @@ typedef struct dt_view_manager_t
       struct dt_lib_module_t *module;
       void (*update)(struct dt_lib_module_t *);
     } more_module;
+
+    /* timeline module proxy */
+    struct
+    {
+      struct dt_lib_module_t *module;
+    } timeline;
 
 
 /* map view proxy object */
@@ -358,12 +423,24 @@ void dt_view_filmstrip_scroll_to_image(dt_view_manager_t *vm, const int imgid, g
 /** get the imageid from last filmstrip activate request */
 int32_t dt_view_filmstrip_get_activated_imgid(dt_view_manager_t *vm);
 
+/** get the lighttable current layout */
+dt_lighttable_layout_t dt_view_lighttable_get_layout(dt_view_manager_t *vm);
+/** get the lighttable full preview state */
+gboolean dt_view_lighttable_preview_state(dt_view_manager_t *vm);
 /** sets the lighttable image in row zoom */
 void dt_view_lighttable_set_zoom(dt_view_manager_t *vm, gint zoom);
+/** gets the lighttable image in row zoom */
+gint dt_view_lighttable_get_zoom(dt_view_manager_t *vm);
+/** gets the culling zoom mode */
+dt_lighttable_culling_zoom_mode_t dt_view_lighttable_get_culling_zoom_mode(dt_view_manager_t *vm);
 /** set first visible image offset */
 void dt_view_lighttable_set_position(dt_view_manager_t *vm, uint32_t pos);
 /** read first visible image offset */
 uint32_t dt_view_lighttable_get_position(dt_view_manager_t *vm);
+/** force a full redraw of the lighttable */
+void dt_view_lighttable_force_expose_all(dt_view_manager_t *vm);
+/** is the image visible in culling layout */
+gboolean dt_view_lighttable_culling_is_image_visible(dt_view_manager_t *vm, gint imgid);
 
 /** set active image */
 void dt_view_filmstrip_set_active_image(dt_view_manager_t *vm, int iid);

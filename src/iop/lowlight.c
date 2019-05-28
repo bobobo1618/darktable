@@ -94,6 +94,11 @@ int default_group()
   return IOP_GROUP_EFFECT;
 }
 
+int default_colorspace(dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, dt_dev_pixelpipe_iop_t *piece)
+{
+  return iop_cs_Lab;
+}
+
 
 void init_key_accels(dt_iop_module_so_t *self)
 {
@@ -288,7 +293,6 @@ void init(dt_iop_module_t *module)
   module->params = calloc(1, sizeof(dt_iop_lowlight_params_t));
   module->default_params = calloc(1, sizeof(dt_iop_lowlight_params_t));
   module->default_enabled = 0; // we're a rather slow and rare op.
-  module->priority = 614; // module order created by iop_dependencies.py, do not edit!
   module->params_size = sizeof(dt_iop_lowlight_params_t);
   module->gui_data = NULL;
   dt_iop_lowlight_params_t tmp;
@@ -795,6 +799,7 @@ static gboolean lowlight_scrolled(GtkWidget *widget, GdkEventScroll *event, gpoi
   dt_iop_module_t *self = (dt_iop_module_t *)user_data;
   dt_iop_lowlight_gui_data_t *c = (dt_iop_lowlight_gui_data_t *)self->gui_data;
 
+  if(((event->state & gtk_accelerator_get_default_mod_mask()) == darktable.gui->sidebar_scroll_mask) != dt_conf_get_bool("darkroom/ui/sidebar_scroll_default")) return FALSE;
   gdouble delta_y;
   if(dt_gui_get_scroll_deltas(event, NULL, &delta_y))
   {
@@ -854,7 +859,7 @@ void gui_init(struct dt_iop_module_t *self)
   dt_bauhaus_slider_set_format(c->scale_blueness, "%0.2f%%");
   gtk_widget_set_tooltip_text(c->scale_blueness, _("blueness in shadows"));
 
-  gtk_box_pack_start(GTK_BOX(self->widget), GTK_WIDGET(c->scale_blueness), TRUE, TRUE, 5);
+  gtk_box_pack_start(GTK_BOX(self->widget), GTK_WIDGET(c->scale_blueness), TRUE, TRUE, 0);
 
   g_signal_connect(G_OBJECT(c->scale_blueness), "value-changed", G_CALLBACK(blueness_callback), self);
 }

@@ -524,7 +524,7 @@ static dt_knight_explosion_t *_new_explosion(float x, float y, int ttl, cairo_pa
   return explosion;
 }
 
-// change the bunker graphics by substracting an explosion sprite
+// change the bunker graphics by subtracting an explosion sprite
 static void _destroy_bunker(dt_knight_t *d, int bunker, int hit_x, int hit_y)
 {
   uint8_t *buf = d->bunker_buf[bunker];
@@ -963,8 +963,6 @@ void enter(dt_view_t *self)
   dt_ui_panel_show(darktable.gui->ui, DT_UI_PANEL_BOTTOM, FALSE, TRUE);
   dt_ui_panel_show(darktable.gui->ui, DT_UI_PANEL_CENTER_TOP, FALSE, TRUE);
   dt_ui_panel_show(darktable.gui->ui, DT_UI_PANEL_CENTER_BOTTOM, FALSE, TRUE);
-  // also hide arrows
-  dt_ui_border_show(darktable.gui->ui, FALSE);
 
   // set the initial game state
   switch(d->game_state)
@@ -993,7 +991,6 @@ void leave(dt_view_t *self)
 
   // show normal gui again
   dt_control_change_cursor(GDK_LEFT_PTR);
-  dt_ui_border_show(darktable.gui->ui, TRUE);
 
   // stop event loop
   if(d->event_loop > 0) g_source_remove(d->event_loop);

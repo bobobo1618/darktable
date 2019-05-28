@@ -38,8 +38,6 @@
 
 DT_MODULE(3)
 
-static gboolean _bauhaus_combobox_set_active_text(GtkWidget *cb, const gchar *text);
-
 const char *name(dt_lib_module_t *self)
 {
   return _("print settings");
@@ -468,26 +466,26 @@ static void _set_printer(const dt_lib_module_t *self, const char *printer_name)
   if (ps->prt.printer.is_turboprint)
     dt_bauhaus_combobox_set(ps->pprofile, 0);
 
-  // if there is 0 hardware margins, set the user marging to 15mm
+  // if there is 0 hardware margins, set the user margin to 17mm
 
   if (ps->prt.printer.hw_margin_top == 0)
   {
-    ps->prt.page.margin_top = 15;
+    ps->prt.page.margin_top = 17;
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(ps->b_top), ps->prt.page.margin_top * units[ps->unit]);
   }
   if (ps->prt.printer.hw_margin_bottom == 0)
   {
-    ps->prt.page.margin_bottom = 15;
+    ps->prt.page.margin_bottom = 17;
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(ps->b_bottom), ps->prt.page.margin_bottom * units[ps->unit]);
   }
   if (ps->prt.printer.hw_margin_left == 0)
   {
-    ps->prt.page.margin_left = 15;
+    ps->prt.page.margin_left = 17;
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(ps->b_left), ps->prt.page.margin_left * units[ps->unit]);
   }
   if (ps->prt.printer.hw_margin_right == 0)
   {
-    ps->prt.page.margin_right = 15;
+    ps->prt.page.margin_right = 17;
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(ps->b_right), ps->prt.page.margin_right * units[ps->unit]);
   }
 
@@ -1547,26 +1545,6 @@ gui_init (dt_lib_module_t *self)
   dt_printers_discovery(_new_printer_callback, self);
 }
 
-static gboolean _bauhaus_combobox_set_active_text(GtkWidget *cb, const gchar *text)
-{
-  g_assert(text != NULL);
-  g_assert(cb != NULL);
-  const GList *labels = dt_bauhaus_combobox_get_labels(cb);
-  const GList *iter = labels;
-  int i = 0;
-  while(iter)
-  {
-    if(!g_strcmp0((gchar*)iter->data, text))
-    {
-      dt_bauhaus_combobox_set(cb, i);
-      return TRUE;
-    }
-    i++;
-    iter = g_list_next(iter);
-  }
-  return FALSE;
-}
-
 void init_presets(dt_lib_module_t *self)
 {
 }
@@ -1813,13 +1791,13 @@ int set_params(dt_lib_module_t *self, const void *params, int size)
 
   // set the GUI with corresponding values
   if (printer[0] != '\0')
-    _bauhaus_combobox_set_active_text(ps->printers, printer);
+    dt_bauhaus_combobox_set_from_text(ps->printers, printer);
 
   if (paper[0] != '\0')
-    _bauhaus_combobox_set_active_text(ps->papers, paper);
+    dt_bauhaus_combobox_set_from_text(ps->papers, paper);
 
   if (media[0] != '\0')
-    _bauhaus_combobox_set_active_text(ps->media, media);
+    dt_bauhaus_combobox_set_from_text(ps->media, media);
 
   dt_bauhaus_combobox_set (ps->orientation, landscape);
 
@@ -1851,7 +1829,7 @@ int set_params(dt_lib_module_t *self, const void *params, int size)
   ps->prt.printer.intent = pintent;
 
   if (style[0] != '\0')
-    _bauhaus_combobox_set_active_text(ps->style, style);
+    dt_bauhaus_combobox_set_from_text(ps->style, style);
   dt_bauhaus_combobox_set (ps->style_mode, style_mode);
 
   gtk_spin_button_set_value (GTK_SPIN_BUTTON(ps->b_top), b_top * units[ps->unit]);
@@ -1994,10 +1972,10 @@ gui_reset (dt_lib_module_t *self)
 {
   dt_lib_print_settings_t *ps = (dt_lib_print_settings_t *)self->data;
 
-  gtk_spin_button_set_value(GTK_SPIN_BUTTON(ps->b_top), 15 * units[ps->unit]);
-  gtk_spin_button_set_value(GTK_SPIN_BUTTON(ps->b_bottom), 15 * units[ps->unit]);
-  gtk_spin_button_set_value(GTK_SPIN_BUTTON(ps->b_left), 15 * units[ps->unit]);
-  gtk_spin_button_set_value(GTK_SPIN_BUTTON(ps->b_right), 15 * units[ps->unit]);
+  gtk_spin_button_set_value(GTK_SPIN_BUTTON(ps->b_top), 17 * units[ps->unit]);
+  gtk_spin_button_set_value(GTK_SPIN_BUTTON(ps->b_bottom), 17 * units[ps->unit]);
+  gtk_spin_button_set_value(GTK_SPIN_BUTTON(ps->b_left), 17 * units[ps->unit]);
+  gtk_spin_button_set_value(GTK_SPIN_BUTTON(ps->b_right), 17 * units[ps->unit]);
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(ps->dtba[ALIGNMENT_CENTER]), TRUE);
   ps->prt.page.alignment = ALIGNMENT_CENTER;
   ps->prt.printer.intent = DT_INTENT_PERCEPTUAL;

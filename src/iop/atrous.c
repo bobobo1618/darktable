@@ -127,6 +127,11 @@ int flags()
   return IOP_FLAGS_SUPPORTS_BLENDING | IOP_FLAGS_ALLOW_TILING;
 }
 
+int default_colorspace(dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, dt_dev_pixelpipe_iop_t *piece)
+{
+  return iop_cs_Lab;
+}
+
 void init_key_accels(dt_iop_module_so_t *self)
 {
   dt_accel_register_slider_iop(self, FALSE, NC_("accel", "mix"));
@@ -146,9 +151,9 @@ void connect_key_accels(dt_iop_module_t *self)
     (a), (a), (a), (a)                                                                                       \
   }
 
-static const __m128 fone ALIGNED(16) = VEC4(0x3f800000u);
-static const __m128 femo ALIGNED(16) = VEC4(0x00adf880u);
-static const __m128 ooo1 ALIGNED(16) = { 0.f, 0.f, 0.f, 1.f };
+static const __m128 fone ALIGNED(64) = VEC4(0x3f800000u);
+static const __m128 femo ALIGNED(64) = VEC4(0x00adf880u);
+static const __m128 ooo1 ALIGNED(64) = { 0.f, 0.f, 0.f, 1.f };
 
 /* SSE intrinsics version of dt_fast_expf defined in darktable.h */
 static inline __m128 dt_fast_expf_sse2(const __m128 x)
@@ -933,7 +938,6 @@ void init(dt_iop_module_t *module)
   module->params = calloc(1, sizeof(dt_iop_atrous_params_t));
   module->default_params = calloc(1, sizeof(dt_iop_atrous_params_t));
   module->default_enabled = 0;
-  module->priority = 571; // module order created by iop_dependencies.py, do not edit!
   module->params_size = sizeof(dt_iop_atrous_params_t);
   module->gui_data = NULL;
   dt_iop_atrous_params_t tmp;
@@ -1571,7 +1575,7 @@ static gboolean area_draw(GtkWidget *widget, cairo_t *crf, gpointer user_data)
     layout = pango_cairo_create_layout(cr);
     pango_layout_set_font_description(layout, desc);
     gdk_cairo_set_source_rgba(cr, &really_dark_bg_color);
-    cairo_select_font_face(cr, "sans-serif", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
+    //cairo_select_font_face(cr, "Roboto", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
     cairo_set_font_size(cr, .06 * height);
     pango_layout_set_text(layout, _("coarse"), -1);
     pango_layout_get_pixel_extents(layout, &ink, NULL);
@@ -1755,6 +1759,7 @@ static gboolean area_scrolled(GtkWidget *widget, GdkEventScroll *event, gpointer
   dt_iop_module_t *self = (dt_iop_module_t *)user_data;
   dt_iop_atrous_gui_data_t *c = (dt_iop_atrous_gui_data_t *)self->gui_data;
 
+  if(((event->state & gtk_accelerator_get_default_mod_mask()) == darktable.gui->sidebar_scroll_mask) != dt_conf_get_bool("darkroom/ui/sidebar_scroll_default")) return FALSE;
   gdouble delta_y;
   if(dt_gui_get_scroll_deltas(event, NULL, &delta_y))
   {

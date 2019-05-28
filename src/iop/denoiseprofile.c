@@ -47,10 +47,10 @@
 #define DT_IOP_DENOISE_PROFILE_RES 64
 #define DT_IOP_DENOISE_PROFILE_BANDS 5
 
-typedef enum dt_iop_denoiseprofile_mode_t
-{
+typedef enum dt_iop_denoiseprofile_mode_t {
   MODE_NLMEANS = 0,
-  MODE_WAVELETS = 1
+  MODE_WAVELETS = 1,
+  MODE_VARIANCE = 2
 } dt_iop_denoiseprofile_mode_t;
 
 typedef enum dt_iop_denoiseprofile_channel_t
@@ -64,7 +64,7 @@ typedef enum dt_iop_denoiseprofile_channel_t
 
 // this is the version of the modules parameters,
 // and includes version information about compile-time dt
-DT_MODULE_INTROSPECTION(5, dt_iop_denoiseprofile_params_t)
+DT_MODULE_INTROSPECTION(7, dt_iop_denoiseprofile_params_t)
 
 typedef struct dt_iop_denoiseprofile_params_v1_t
 {
@@ -84,15 +84,43 @@ typedef struct dt_iop_denoiseprofile_params_v4_t
   float y[DT_DENOISE_PROFILE_NONE][DT_IOP_DENOISE_PROFILE_BANDS]; // values to change wavelet force by frequency
 } dt_iop_denoiseprofile_params_v4_t;
 
+typedef struct dt_iop_denoiseprofile_params_v5_t
+{
+  float radius;                      // patch size
+  float nbhood;                      // search radius
+  float strength;                    // noise level after equalization
+  float a[3], b[3];                  // fit for poissonian-gaussian noise per color channel.
+  dt_iop_denoiseprofile_mode_t mode; // switch between nlmeans and wavelets
+  float x[DT_DENOISE_PROFILE_NONE][DT_IOP_DENOISE_PROFILE_BANDS];
+  float y[DT_DENOISE_PROFILE_NONE][DT_IOP_DENOISE_PROFILE_BANDS]; // values to change wavelet force by frequency
+} dt_iop_denoiseprofile_params_v5_t;
+
+typedef struct dt_iop_denoiseprofile_params_v6_t
+{
+  float radius;                      // patch size
+  float nbhood;                      // search radius
+  float strength;                    // noise level after equalization
+  float scattering;                  // spread the patch search zone without increasing number of patches
+  float a[3], b[3];                  // fit for poissonian-gaussian noise per color channel.
+  dt_iop_denoiseprofile_mode_t mode; // switch between nlmeans and wavelets
+  float x[DT_DENOISE_PROFILE_NONE][DT_IOP_DENOISE_PROFILE_BANDS];
+  float y[DT_DENOISE_PROFILE_NONE][DT_IOP_DENOISE_PROFILE_BANDS]; // values to change wavelet force by frequency
+} dt_iop_denoiseprofile_params_v6_t;
+
 typedef struct dt_iop_denoiseprofile_params_t
 {
   float radius;     // patch size
   float nbhood;     // search radius
   float strength;   // noise level after equalization
+  float scattering; // spread the patch search zone without increasing number of patches
+  float central_pixel_weight; // increase central pixel's weight in patch comparison
   float a[3], b[3]; // fit for poissonian-gaussian noise per color channel.
   dt_iop_denoiseprofile_mode_t mode; // switch between nlmeans and wavelets
   float x[DT_DENOISE_PROFILE_NONE][DT_IOP_DENOISE_PROFILE_BANDS];
   float y[DT_DENOISE_PROFILE_NONE][DT_IOP_DENOISE_PROFILE_BANDS]; // values to change wavelet force by frequency
+  gboolean wb_adaptive_anscombe; // whether to adapt anscombe transform to wb coeffs
+  // backward compatibility options
+  gboolean fix_anscombe_and_nlmeans_norm;
 } dt_iop_denoiseprofile_params_t;
 
 typedef struct dt_iop_denoiseprofile_gui_data_t
@@ -102,11 +130,13 @@ typedef struct dt_iop_denoiseprofile_gui_data_t
   GtkWidget *radius;
   GtkWidget *nbhood;
   GtkWidget *strength;
+  GtkWidget *scattering;
+  GtkWidget *central_pixel_weight;
   dt_noiseprofile_t interpolated; // don't use name, maker or model, they may point to garbage
   GList *profiles;
-  GtkWidget *stack;
   GtkWidget *box_nlm;
   GtkWidget *box_wavelets;
+  GtkWidget *box_variance;
   dt_draw_curve_t *transition_curve; // curve for gui to draw
   GtkDrawingArea *area;
   GtkNotebook *channel_tabs;
@@ -119,6 +149,16 @@ typedef struct dt_iop_denoiseprofile_gui_data_t
   float draw_xs[DT_IOP_DENOISE_PROFILE_RES], draw_ys[DT_IOP_DENOISE_PROFILE_RES];
   float draw_min_xs[DT_IOP_DENOISE_PROFILE_RES], draw_min_ys[DT_IOP_DENOISE_PROFILE_RES];
   float draw_max_xs[DT_IOP_DENOISE_PROFILE_RES], draw_max_ys[DT_IOP_DENOISE_PROFILE_RES];
+  GtkWidget *wb_adaptive_anscombe;
+  GtkLabel *label_var;
+  float variance_R;
+  GtkLabel *label_var_R;
+  float variance_G;
+  GtkLabel *label_var_G;
+  float variance_B;
+  GtkLabel *label_var_B;
+  // backward compatibility options
+  GtkWidget *fix_anscombe_and_nlmeans_norm;
 } dt_iop_denoiseprofile_gui_data_t;
 
 typedef struct dt_iop_denoiseprofile_data_t
@@ -126,11 +166,16 @@ typedef struct dt_iop_denoiseprofile_data_t
   float radius;                      // search radius
   float nbhood;                      // search radius
   float strength;                    // noise level after equalization
+  float scattering;                  // spread the search zone without changing number of patches
+  float central_pixel_weight;        // increase central pixel's weight in patch comparison
   float a[3], b[3];                  // fit for poissonian-gaussian noise per color channel.
   dt_iop_denoiseprofile_mode_t mode; // switch between nlmeans and wavelets
   dt_draw_curve_t *curve[DT_DENOISE_PROFILE_NONE];
   dt_iop_denoiseprofile_channel_t channel;
   float force[DT_DENOISE_PROFILE_NONE][DT_IOP_DENOISE_PROFILE_BANDS];
+  gboolean wb_adaptive_anscombe; // whether to adapt anscombe transform to wb coeffs
+  // backward compatibility options
+  gboolean fix_anscombe_and_nlmeans_norm;
 } dt_iop_denoiseprofile_data_t;
 
 typedef struct dt_iop_denoiseprofile_global_data_t
@@ -212,7 +257,7 @@ int legacy_params(dt_iop_module_t *self, const void *const old_params, const int
     else
       memcpy(&v4, old_params, sizeof(v4)); // was v4 already
 
-    dt_iop_denoiseprofile_params_t *v5 = new_params;
+    dt_iop_denoiseprofile_params_v5_t *v5 = new_params;
     v5->radius = v4.radius;
     v5->strength = v4.strength;
     v5->mode = v4.mode;
@@ -232,6 +277,72 @@ int legacy_params(dt_iop_module_t *self, const void *const old_params, const int
     v5->nbhood = 7; // set to old hardcoded default
     return 0;
   }
+  else if(new_version == 6)
+  {
+    dt_iop_denoiseprofile_params_v5_t v5;
+    if(old_version < 5)
+    {
+      // first update to v5
+      if(legacy_params(self, old_params, old_version, &v5, 5)) return 1;
+    }
+    else
+      memcpy(&v5, old_params, sizeof(v5)); // was v5 already
+
+    dt_iop_denoiseprofile_params_v6_t *v6 = new_params;
+    v6->radius = v5.radius;
+    v6->strength = v5.strength;
+    v6->mode = v5.mode;
+    v6->nbhood = v5.nbhood;
+    for(int k = 0; k < 3; k++)
+    {
+      v6->a[k] = v5.a[k];
+      v6->b[k] = v5.b[k];
+    }
+    for(int b = 0; b < DT_IOP_DENOISE_PROFILE_BANDS; b++)
+    {
+      for(int c = 0; c < DT_DENOISE_PROFILE_NONE; c++)
+      {
+        v6->x[c][b] = v5.x[c][b];
+        v6->y[c][b] = v5.y[c][b];
+      }
+    }
+    v6->scattering = 0.0; // no scattering
+    return 0;
+  }
+  else if(new_version == 7)
+  {
+    dt_iop_denoiseprofile_params_v6_t v6;
+    if(old_version < 6)
+    {
+      // first update to v6
+      if(legacy_params(self, old_params, old_version, &v6, 6)) return 1;
+    }
+    else
+      memcpy(&v6, old_params, sizeof(v6)); // was v6 already
+    dt_iop_denoiseprofile_params_t *v7 = new_params;
+    v7->radius = v6.radius;
+    v7->strength = v6.strength;
+    v7->mode = v6.mode;
+    v7->nbhood = v6.nbhood;
+    for(int k = 0; k < 3; k++)
+    {
+      v7->a[k] = v6.a[k];
+      v7->b[k] = v6.b[k];
+    }
+    for(int b = 0; b < DT_IOP_DENOISE_PROFILE_BANDS; b++)
+    {
+      for(int c = 0; c < DT_DENOISE_PROFILE_NONE; c++)
+      {
+        v7->x[c][b] = v6.x[c][b];
+        v7->y[c][b] = v6.y[c][b];
+      }
+    }
+    v7->scattering = v6.scattering;
+    v7->central_pixel_weight = 0.0;
+    v7->fix_anscombe_and_nlmeans_norm = FALSE; // don't fix anscombe and norm to ensure backward compatibility
+    v7->wb_adaptive_anscombe = TRUE;
+    return 0;
+  }
   return 1;
 }
 
@@ -249,6 +360,11 @@ int default_group()
 int flags()
 {
   return IOP_FLAGS_SUPPORTS_BLENDING | IOP_FLAGS_ALLOW_TILING;
+}
+
+int default_colorspace(dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, dt_dev_pixelpipe_iop_t *piece)
+{
+  return iop_cs_rgb;
 }
 
 static void add_preset(
@@ -289,10 +405,10 @@ void init_presets(dt_iop_module_so_t *self)
 {
   // these blobs were exported as dtstyle and copied from there:
   add_preset(self, _("chroma (use on 1st instance)"),
-             "gz03eJxjYGiwZ2B44MAAphv2b4vdb1mnYGTFLcZomryXxzRr910TRgYYaLADEkB1DvYQ9eSLiUf9s+te/s/OjJPV/sA7Y3vZI/X2EHnyMAB8fx/c", 5,
+             "gz03eJxjYGiwZ2B44MAApmGgYf+22P2WdQpGVtxijKbJe3lMs3bfNWFEyNsBCaB6B3uEPvLExKP+2XUv/2dnxslqf+Cdsb3skXp7iDx5GORGEAYAkHIf3g==", 7,
              "gz12eJxjZGBgEGYAgRNODESDBnsIHll8AM62GP8=", 7);
   add_preset(self, _("luma (use on 2nd instance)"),
-             "gz03eJxjYGiwZ2B44DBr5kw7BoaG/X6WAZbuc/dZXtJTNU3keG4SnmltysgAAw1ANQxA9Q5ADNJHvpjfgz+2J1S17X6XL7QzzP5hV9i6FCpPHgYA0YsieQ==", 5,
+             "gz03eJxjYGiwZ2B44DBr5kw7Bjho2O9nGWDpPnef5SU9VdNEjucm4ZnWpowIeZBaoD4HIAbpJ1/M78Ef2xOq2na/yxfaGWb/sCtsXQqVJxszgNwJAATFIno=", 7,
              "gz12eJxjZGBgEGAAgR4nBqJBgz0Ejyw+AIdGGMA=", 7);
 }
 
@@ -323,11 +439,12 @@ void tiling_callback(struct dt_iop_module_t *self, struct dt_dev_pixelpipe_iop_t
   {
     const int P = ceilf(d->radius * fminf(roi_in->scale, 2.0f) / fmaxf(piece->iscale, 1.0f)); // pixel filter size
     const int K = ceilf(d->nbhood * fminf(roi_in->scale, 2.0f) / fmaxf(piece->iscale, 1.0f)); // nbhood
+    const int K_scattered = ceilf(d->scattering * (K * K + K * sqrt(K))) + K;
 
     tiling->factor = 4.0f + 0.25f * NUM_BUCKETS; // in + out + (2 + NUM_BUCKETS * 0.25) tmp
     tiling->maxbuf = 1.0f;
     tiling->overhead = 0;
-    tiling->overlap = P + K;
+    tiling->overlap = P + K_scattered;
     tiling->xalign = 1;
     tiling->yalign = 1;
   }
@@ -920,11 +1037,35 @@ static void process_wavelets(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_
     buf[k] = dt_alloc_align(64, (size_t)4 * sizeof(float) * npixels);
   tmp = dt_alloc_align(64, (size_t)4 * sizeof(float) * npixels);
 
-  const float wb[3] = { // twice as many samples in green channel:
-                        2.0f * piece->pipe->dsc.processed_maximum[0] * d->strength * (in_scale * in_scale),
-                        piece->pipe->dsc.processed_maximum[1] * d->strength * (in_scale * in_scale),
-                        2.0f * piece->pipe->dsc.processed_maximum[2] * d->strength * (in_scale * in_scale)
-  };
+  const float wb_mean = (piece->pipe->dsc.temperature.coeffs[0] + piece->pipe->dsc.temperature.coeffs[1]
+                         + piece->pipe->dsc.temperature.coeffs[2])
+                        / 3.0f;
+  // we init wb by the mean of the coeffs, which corresponds to the mean
+  // amplification that is done in addition to the "ISO" related amplification
+  float wb[3] = { wb_mean, wb_mean, wb_mean };
+  if(d->fix_anscombe_and_nlmeans_norm)
+  {
+    if(wb_mean != 0.0f && d->wb_adaptive_anscombe)
+    {
+      for(int i = 0; i < 3; i++) wb[i] = piece->pipe->dsc.temperature.coeffs[i];
+    }
+    else if(wb_mean == 0.0f)
+    {
+      // temperature coeffs are equal to 0 if we open a JPG image.
+      // in this case consider them equal to 1.
+      for(int i = 0; i < 3; i++) wb[i] = 1.0f;
+    }
+    // else, wb_adaptive_anscombe is false and our wb array is
+    // filled with the wb_mean
+  }
+  else
+  {
+    wb[0] = 2.0f * piece->pipe->dsc.processed_maximum[0];
+    wb[1] = piece->pipe->dsc.processed_maximum[1];
+    wb[2] = 2.0f * piece->pipe->dsc.processed_maximum[2];
+  }
+  // update the coeffs with strength and scale
+  for(int i = 0; i < 3; i++) wb[i] *= d->strength * (in_scale * in_scale);
   // only use green channel + wb for now:
   const float aa[3] = { d->a[1] * wb[0], d->a[1] * wb[1], d->a[1] * wb[2] };
   const float bb[3] = { d->b[1] * wb[0], d->b[1] * wb[1], d->b[1] * wb[2] };
@@ -1055,6 +1196,11 @@ static void process_wavelets(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_
 #undef MAX_MAX_SCALE
 }
 
+static int sign(int a)
+{
+  return (a > 0) - (a < 0);
+}
+
 static void process_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece,
                             const void *const ivoid, void *const ovoid, const dt_iop_roi_t *const roi_in,
                             const dt_iop_roi_t *const roi_out)
@@ -1078,18 +1224,51 @@ static void process_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t
   memset(ovoid, 0x0, (size_t)sizeof(float) * roi_out->width * roi_out->height * 4);
   float *in = dt_alloc_align(64, (size_t)4 * sizeof(float) * roi_in->width * roi_in->height);
 
-  const float wb[3] = { piece->pipe->dsc.processed_maximum[0] * d->strength * (scale * scale),
-                        piece->pipe->dsc.processed_maximum[1] * d->strength * (scale * scale),
-                        piece->pipe->dsc.processed_maximum[2] * d->strength * (scale * scale) };
+  const float wb_mean = (piece->pipe->dsc.temperature.coeffs[0] + piece->pipe->dsc.temperature.coeffs[1]
+                         + piece->pipe->dsc.temperature.coeffs[2])
+                        / 3.0f;
+  // we init wb by the mean of the coeffs, which corresponds to the mean
+  // amplification that is done in addition to the "ISO" related amplification
+  float wb[3] = { wb_mean, wb_mean, wb_mean };
+  if(d->fix_anscombe_and_nlmeans_norm)
+  {
+    if(wb_mean != 0.0f && d->wb_adaptive_anscombe)
+    {
+      for(int i = 0; i < 3; i++) wb[i] = piece->pipe->dsc.temperature.coeffs[i];
+    }
+    else if(wb_mean == 0.0f)
+    {
+      // temperature coeffs are equal to 0 if we open a JPG image.
+      // in this case consider them equal to 1.
+      for(int i = 0; i < 3; i++) wb[i] = 1.0f;
+    }
+    // else, wb_adaptive_anscombe is false and our wb array is
+    // filled with the wb_mean
+  }
+  else
+  {
+    for(int i = 0; i < 3; i++) wb[i] = piece->pipe->dsc.processed_maximum[i];
+  }
+  // update the coeffs with strength and scale
+  for(int i = 0; i < 3; i++) wb[i] *= d->strength * (scale * scale);
+
   const float aa[3] = { d->a[1] * wb[0], d->a[1] * wb[1], d->a[1] * wb[2] };
   const float bb[3] = { d->b[1] * wb[0], d->b[1] * wb[1], d->b[1] * wb[2] };
   precondition((float *)ivoid, in, roi_in->width, roi_in->height, aa, bb);
 
   // for each shift vector
-  for(int kj = -K; kj <= K; kj++)
+  for(int kj_index = -K; kj_index <= K; kj_index++)
   {
-    for(int ki = -K; ki <= K; ki++)
+    for(int ki_index = -K; ki_index <= K; ki_index++)
     {
+      // This formula is made for:
+      // - ensuring that kj = kj_index and ki = ki_index when d->scattering is 0
+      // - ensuring that no patch can appear twice (provided that d->nbhood is in 0,1 range)
+      // - avoiding grid artifacts by trying to take patches on various lines and columns
+      int kj = (kj_index * kj_index + abs(ki_index) * sqrt(abs(kj_index))) * sign(kj_index) * d->scattering
+               + kj_index;
+      int ki = (ki_index * ki_index + abs(kj_index) * sqrt(abs(ki_index))) * sign(ki_index) * d->scattering
+               + ki_index;
       // TODO: adaptive K tests here!
       // TODO: expf eval for real bilateral experience :)
 
@@ -1146,14 +1325,33 @@ static void process_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t
           {
             // TODO: could put that outside the loop.
             // DEBUG XXX bring back to computable range:
-            const float norm = .015f / (2 * P + 1);
+            // Each patch has a width of 2P+1 and a height of 2P+1
+            // thus, divide by (2P+1)^2.
+            // The 0.045 was derived from the old formula, to keep the
+            // norm identical when P=1, as the norm for P=1 seemed
+            // to work quite well: 0.045 = 0.015 * (2 * P + 1) with P=1.
+            float norm = .045f / ((2 * P + 1) * (2 * P + 1));
+            if(!d->fix_anscombe_and_nlmeans_norm)
+            {
+              // use old formula
+              norm = .015f / (2 * P + 1);
+            }
             const float iv[4] = { ins[0], ins[1], ins[2], 1.0f };
+            const float *inp = in + 4 * i + (size_t)4 * roi_in->width * j;
+            const float *inps = in + 4 * i + 4l * ((size_t)roi_in->width * (j + kj) + ki);
+            float contribution_center = 0.0f;
+            for(int k = 0; k < 3; k++) contribution_center += (inp[k] - inps[k]) * (inp[k] - inps[k]);
+            // multiply the center contribution to be able to have a general setting
+            // that does not depend on patch size.
+            contribution_center *= (2 * P + 1) * (2 * P + 1);
+            float patch_dissimilarity = slide + contribution_center * d->central_pixel_weight;
+            patch_dissimilarity /= (1.0 + d->central_pixel_weight);
 #if defined(_OPENMP) && defined(OPENMP_SIMD_)
 #pragma omp SIMD()
 #endif
             for(size_t c = 0; c < 4; c++)
             {
-              out[c] += iv[c] * fast_mexp2f(fmaxf(0.0f, slide * norm - 2.0f));
+              out[c] += iv[c] * fast_mexp2f(fmaxf(0.0f, patch_dissimilarity * norm - 2.0f));
             }
           }
         }
@@ -1211,7 +1409,7 @@ static void process_nlmeans_sse(struct dt_iop_module_t *self, dt_dev_pixelpipe_i
 {
   // this is called for preview and full pipe separately, each with its own pixelpipe piece.
   // get our data struct:
-  dt_iop_denoiseprofile_params_t *d = (dt_iop_denoiseprofile_params_t *)piece->data;
+  dt_iop_denoiseprofile_data_t *d = (dt_iop_denoiseprofile_data_t *)piece->data;
 
   // adjust to zoom size:
   const float scale = fminf(roi_in->scale, 2.0f) / fmaxf(piece->iscale, 1.0f);
@@ -1225,25 +1423,58 @@ static void process_nlmeans_sse(struct dt_iop_module_t *self, dt_dev_pixelpipe_i
   memset(ovoid, 0x0, (size_t)sizeof(float) * roi_out->width * roi_out->height * 4);
   float *in = dt_alloc_align(64, (size_t)4 * sizeof(float) * roi_in->width * roi_in->height);
 
-  const float wb[3] = { piece->pipe->dsc.processed_maximum[0] * d->strength * (scale * scale),
-                        piece->pipe->dsc.processed_maximum[1] * d->strength * (scale * scale),
-                        piece->pipe->dsc.processed_maximum[2] * d->strength * (scale * scale) };
+  const float wb_mean = (piece->pipe->dsc.temperature.coeffs[0] + piece->pipe->dsc.temperature.coeffs[1]
+                         + piece->pipe->dsc.temperature.coeffs[2])
+                        / 3.0f;
+  // we init wb by the mean of the coeffs, which corresponds to the mean
+  // amplification that is done in addition to the "ISO" related amplification
+  float wb[3] = { wb_mean, wb_mean, wb_mean };
+  if(d->fix_anscombe_and_nlmeans_norm)
+  {
+    if(wb_mean != 0.0f && d->wb_adaptive_anscombe)
+    {
+      for(int i = 0; i < 3; i++) wb[i] = piece->pipe->dsc.temperature.coeffs[i];
+    }
+    else if(wb_mean == 0.0f)
+    {
+      // temperature coeffs are equal to 0 if we open a JPG image.
+      // in this case consider them equal to 1.
+      for(int i = 0; i < 3; i++) wb[i] = 1.0f;
+    }
+    // else, wb_adaptive_anscombe is false and our wb array is
+    // filled with the wb_mean
+  }
+  else
+  {
+    for(int i = 0; i < 3; i++) wb[i] = piece->pipe->dsc.processed_maximum[i];
+  }
+  // update the coeffs with strength and scale
+  for(int i = 0; i < 3; i++) wb[i] *= d->strength * (scale * scale);
+
   const float aa[3] = { d->a[1] * wb[0], d->a[1] * wb[1], d->a[1] * wb[2] };
   const float bb[3] = { d->b[1] * wb[0], d->b[1] * wb[1], d->b[1] * wb[2] };
   precondition((float *)ivoid, in, roi_in->width, roi_in->height, aa, bb);
 
   // for each shift vector
-  for(int kj = -K; kj <= K; kj++)
+  for(int kj_index = -K; kj_index <= K; kj_index++)
   {
-    for(int ki = -K; ki <= K; ki++)
+    for(int ki_index = -K; ki_index <= K; ki_index++)
     {
+      // This formula is made for:
+      // - ensuring that kj = kj_index and ki = ki_index when d->scattering is 0
+      // - ensuring that no patch can appear twice (provided that d->nbhood is in 0,1 range)
+      // - avoiding grid artifacts by trying to take patches on various lines and columns
+      int kj = (kj_index * kj_index + abs(ki_index) * sqrt(abs(kj_index))) * sign(kj_index) * d->scattering
+               + kj_index;
+      int ki = (ki_index * ki_index + abs(kj_index) * sqrt(abs(ki_index))) * sign(ki_index) * d->scattering
+               + ki_index;
       int inited_slide = 0;
 // don't construct summed area tables but use sliding window! (applies to cpu version res < 1k only, or else
 // we will add up errors)
 // do this in parallel with a little threading overhead. could parallelize the outer loops with a bit more
 // memory
 #ifdef _OPENMP
-#pragma omp parallel for schedule(static) default(none) firstprivate(inited_slide) shared(kj, ki, in, Sa)
+#pragma omp parallel for schedule(static) default(none) firstprivate(inited_slide, d) shared(kj, ki, in, Sa)
 #endif
       for(int j = 0; j < roi_out->height; j++)
       {
@@ -1290,10 +1521,29 @@ static void process_nlmeans_sse(struct dt_iop_module_t *self, dt_dev_pixelpipe_i
           {
             // TODO: could put that outside the loop.
             // DEBUG XXX bring back to computable range:
-            const float norm = .015f / (2 * P + 1);
+            // Each patch has a width of 2P+1 and a height of 2P+1
+            // thus, divide by (2P+1)^2.
+            // The 0.045 was derived from the old formula, to keep the
+            // norm identical when P=1, as the norm for P=1 seemed
+            // to work quite well: 0.045 = 0.015 * (2 * P + 1) with P=1.
+            float norm = .045f / ((2 * P + 1) * (2 * P + 1));
+            if(!d->fix_anscombe_and_nlmeans_norm)
+            {
+              // use old formula
+              norm = .015f / (2 * P + 1);
+            }
             const __m128 iv = { ins[0], ins[1], ins[2], 1.0f };
-            _mm_store_ps(out,
-                         _mm_load_ps(out) + iv * _mm_set1_ps(fast_mexp2f(fmaxf(0.0f, slide * norm - 2.0f))));
+            const float *inp = in + 4 * i + (size_t)4 * roi_in->width * j;
+            const float *inps = in + 4 * i + 4l * ((size_t)roi_in->width * (j + kj) + ki);
+            float contribution_center = 0.0f;
+            for(int k = 0; k < 3; k++) contribution_center += (inp[k] - inps[k]) * (inp[k] - inps[k]);
+            // multiply the center contribution to be able to have a general setting
+            // that does not depend on patch size.
+            contribution_center *= (2 * P + 1) * (2 * P + 1);
+            float patch_dissimilarity = slide + contribution_center * d->central_pixel_weight;
+            patch_dissimilarity /= (1.0 + d->central_pixel_weight);
+            _mm_store_ps(out, _mm_load_ps(out)
+                                  + iv * _mm_set1_ps(fast_mexp2f(fmaxf(0.0f, patch_dissimilarity * norm - 2.0f))));
             // _mm_store_ps(out, _mm_load_ps(out) + iv * _mm_set1_ps(fast_mexp2f(fmaxf(0.0f, slide*norm))));
           }
           s++;
@@ -1398,6 +1648,136 @@ static void process_nlmeans_sse(struct dt_iop_module_t *self, dt_dev_pixelpipe_i
 }
 #endif
 
+static void sum_rec(const unsigned npixels, const float *in, float *out)
+{
+  if(npixels <= 3)
+  {
+    for(int c = 0; c < 3; c++)
+    {
+      out[c] = 0.0;
+    }
+    for(int i = 0; i < npixels; i++)
+    {
+      for(int c = 0; c < 3; c++)
+      {
+        out[c] += in[i * 4 + c];
+      }
+    }
+    return;
+  }
+
+  unsigned npixels_first_half = npixels >> 1;
+  unsigned npixels_second_half = npixels - npixels_first_half;
+  sum_rec(npixels_first_half, in, out);
+  sum_rec(npixels_second_half, in + 4 * npixels_first_half, out + 4 * npixels_first_half);
+  for(int c = 0; c < 3; c++)
+  {
+    out[c] += out[4 * npixels_first_half + c];
+  }
+}
+
+/* this gives (npixels-1)*V[X] */
+static void variance_rec(const unsigned npixels, const float *in, float *out, const float mean[3])
+{
+  if(npixels <= 3)
+  {
+    for(int c = 0; c < 3; c++)
+    {
+      out[c] = 0.0;
+    }
+    for(int i = 0; i < npixels; i++)
+    {
+      for(int c = 0; c < 3; c++)
+      {
+        float diff = in[i * 4 + c] - mean[c];
+        out[c] += diff * diff;
+      }
+    }
+    return;
+  }
+
+  unsigned npixels_first_half = npixels >> 1;
+  unsigned npixels_second_half = npixels - npixels_first_half;
+  variance_rec(npixels_first_half, in, out, mean);
+  variance_rec(npixels_second_half, in + 4 * npixels_first_half, out + 4 * npixels_first_half, mean);
+  for(int c = 0; c < 3; c++)
+  {
+    out[c] += out[4 * npixels_first_half + c];
+  }
+}
+
+static void process_variance(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, const void *const ivoid,
+                             void *const ovoid, const dt_iop_roi_t *const roi_in,
+                             const dt_iop_roi_t *const roi_out)
+{
+  const dt_iop_denoiseprofile_data_t *const d = piece->data;
+  dt_iop_denoiseprofile_gui_data_t *g = self->gui_data;
+
+  const int width = roi_in->width, height = roi_in->height;
+  size_t npixels = (size_t)width * height;
+
+  memcpy(ovoid, ivoid, npixels * 4 * sizeof(float));
+  if((piece->pipe->type == DT_DEV_PIXELPIPE_PREVIEW) || (g == NULL))
+  {
+    return;
+  }
+
+  float *in = dt_alloc_align(64, (size_t)4 * sizeof(float) * roi_in->width * roi_in->height);
+
+  const float wb_mean = (piece->pipe->dsc.temperature.coeffs[0] + piece->pipe->dsc.temperature.coeffs[1]
+                         + piece->pipe->dsc.temperature.coeffs[2])
+                        / 3.0f;
+  // we init wb by the mean of the coeffs, which corresponds to the mean
+  // amplification that is done in addition to the "ISO" related amplification
+  float wb[3] = { wb_mean, wb_mean, wb_mean };
+  if(d->fix_anscombe_and_nlmeans_norm)
+  {
+    if(wb_mean != 0.0f && d->wb_adaptive_anscombe)
+    {
+      for(int i = 0; i < 3; i++) wb[i] = piece->pipe->dsc.temperature.coeffs[i];
+    }
+    else if(wb_mean == 0.0f)
+    {
+      // temperature coeffs are equal to 0 if we open a JPG image.
+      // in this case consider them equal to 1.
+      for(int i = 0; i < 3; i++) wb[i] = 1.0f;
+    }
+    // else, wb_adaptive_anscombe is false and our wb array is
+    // filled with the wb_mean
+  }
+  else
+  {
+    for(int i = 0; i < 3; i++) wb[i] = piece->pipe->dsc.processed_maximum[i];
+  }
+  // update the coeffs with strength
+  for(int i = 0; i < 3; i++) wb[i] *= d->strength;
+
+  const float aa[3] = { d->a[1] * wb[0], d->a[1] * wb[1], d->a[1] * wb[2] };
+  const float bb[3] = { d->b[1] * wb[0], d->b[1] * wb[1], d->b[1] * wb[2] };
+  precondition((float *)ivoid, in, roi_in->width, roi_in->height, aa, bb);
+
+  float *out = (float *)ovoid;
+  // we use out as a temporary buffer here
+  // compute mean
+  sum_rec(npixels, in, out);
+  float mean[3];
+  for(int c = 0; c < 3; c++)
+  {
+    mean[c] = out[c] / npixels;
+  }
+  variance_rec(npixels, in, out, mean);
+  float var[3];
+  for(int c = 0; c < 3; c++)
+  {
+    var[c] = out[c] / (npixels - 1);
+  }
+  g->variance_R = var[0];
+  g->variance_G = var[1];
+  g->variance_B = var[2];
+
+  memcpy(ovoid, ivoid, npixels * 4 * sizeof(float));
+}
+
 #ifdef HAVE_OPENCL
 static int bucket_next(unsigned int *state, unsigned int max)
 {
@@ -1413,7 +1793,7 @@ static int process_nlmeans_cl(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop
                               cl_mem dev_out, const dt_iop_roi_t *const roi_in,
                               const dt_iop_roi_t *const roi_out)
 {
-  dt_iop_denoiseprofile_params_t *d = (dt_iop_denoiseprofile_params_t *)piece->data;
+  dt_iop_denoiseprofile_data_t *d = (dt_iop_denoiseprofile_data_t *)piece->data;
   dt_iop_denoiseprofile_global_data_t *gd = (dt_iop_denoiseprofile_global_data_t *)self->data;
 
   const int devid = piece->pipe->devid;
@@ -1435,12 +1815,47 @@ static int process_nlmeans_cl(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop
   const float scale = fminf(roi_in->scale, 2.0f) / fmaxf(piece->iscale, 1.0f);
   const int P = ceilf(d->radius * scale); // pixel filter size
   const int K = ceilf(d->nbhood * scale); // nbhood
-  const float norm = 0.015f / (2 * P + 1);
 
+  // Each patch has a width of 2P+1 and a height of 2P+1
+  // thus, divide by (2P+1)^2.
+  // The 0.045 was derived from the old formula, to keep the
+  // norm identical when P=1, as the norm for P=1 seemed
+  // to work quite well: 0.045 = 0.015 * (2 * P + 1) with P=1.
+  float norm = .045f / ((2 * P + 1) * (2 * P + 1));
+  if(!d->fix_anscombe_and_nlmeans_norm)
+  {
+    // use old formula
+    norm = .015f / (2 * P + 1);
+  }
 
-  const float wb[4] = { piece->pipe->dsc.processed_maximum[0] * d->strength * (scale * scale),
-                        piece->pipe->dsc.processed_maximum[1] * d->strength * (scale * scale),
-                        piece->pipe->dsc.processed_maximum[2] * d->strength * (scale * scale), 0.0f };
+  const float wb_mean = (piece->pipe->dsc.temperature.coeffs[0] + piece->pipe->dsc.temperature.coeffs[1]
+                         + piece->pipe->dsc.temperature.coeffs[2])
+                        / 3.0f;
+  // we init wb by the mean of the coeffs, which corresponds to the mean
+  // amplification that is done in addition to the "ISO" related amplification
+  float wb[4] = { wb_mean, wb_mean, wb_mean, 0.0f };
+  if(d->fix_anscombe_and_nlmeans_norm)
+  {
+    if(wb_mean != 0.0f && d->wb_adaptive_anscombe)
+    {
+      for(int i = 0; i < 3; i++) wb[i] = piece->pipe->dsc.temperature.coeffs[i];
+    }
+    else if(wb_mean == 0.0f)
+    {
+      // temperature coeffs are equal to 0 if we open a JPG image.
+      // in this case consider them equal to 1.
+      for(int i = 0; i < 3; i++) wb[i] = 1.0f;
+    }
+    // else, wb_adaptive_anscombe is false and our wb array is
+    // filled with the wb_mean
+  }
+  else
+  {
+    for(int i = 0; i < 3; i++) wb[i] = piece->pipe->dsc.processed_maximum[i];
+  }
+  // update the coeffs with strength and scale
+  for(int i = 0; i < 3; i++) wb[i] *= d->strength * (scale * scale);
+
   const float aa[4] = { d->a[1] * wb[0], d->a[1] * wb[1], d->a[1] * wb[2], 1.0f };
   const float bb[4] = { d->b[1] * wb[0], d->b[1] * wb[1], d->b[1] * wb[2], 1.0f };
   const float sigma2[4] = { (bb[0] / aa[0]) * (bb[0] / aa[0]), (bb[1] / aa[1]) * (bb[1] / aa[1]),
@@ -1506,9 +1921,18 @@ static int process_nlmeans_cl(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop
   if(err != CL_SUCCESS) goto error;
 
 
-  for(int j = -K; j <= 0; j++)
-    for(int i = -K; i <= K; i++)
+  for(int kj_index = -K; kj_index <= 0; kj_index++)
+  {
+    for(int ki_index = -K; ki_index <= K; ki_index++)
     {
+      // This formula is made for:
+      // - ensuring that j = kj_index and i = ki_index when d->scattering is 0
+      // - ensuring that no patch can appear twice (provided that d->nbhood is in 0,1 range)
+      // - avoiding grid artifacts by trying to take patches on various lines and columns
+      int j = (kj_index * kj_index + abs(ki_index) * sqrt(abs(kj_index))) * sign(kj_index) * d->scattering
+              + kj_index;
+      int i = (ki_index * ki_index + abs(kj_index) * sqrt(abs(ki_index))) * sign(ki_index) * d->scattering
+              + ki_index;
       int q[2] = { i, j };
 
       dev_U4 = buckets[bucket_next(&state, NUM_BUCKETS)];
@@ -1555,6 +1979,9 @@ static int process_nlmeans_cl(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop
       dt_opencl_set_kernel_arg(devid, gd->kernel_denoiseprofile_vert, 6, sizeof(float), (void *)&norm);
       dt_opencl_set_kernel_arg(devid, gd->kernel_denoiseprofile_vert, 7, (vblocksize + 2 * P) * sizeof(float),
                                NULL);
+      dt_opencl_set_kernel_arg(devid, gd->kernel_denoiseprofile_vert, 8, sizeof(float),
+                               (void *)&(d->central_pixel_weight));
+      dt_opencl_set_kernel_arg(devid, gd->kernel_denoiseprofile_vert, 9, sizeof(cl_mem), ((void *)&dev_U4));
       err = dt_opencl_enqueue_kernel_2d_with_local(devid, gd->kernel_denoiseprofile_vert, sizesl, local);
       if(err != CL_SUCCESS) goto error;
 
@@ -1574,6 +2001,7 @@ static int process_nlmeans_cl(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop
       // indirectly give gpu some air to breathe (and to do display related stuff)
       dt_iop_nap(darktable.opencl->micro_nap);
     }
+  }
 
   dt_opencl_set_kernel_arg(devid, gd->kernel_denoiseprofile_finish, 0, sizeof(cl_mem), (void *)&dev_in);
   dt_opencl_set_kernel_arg(devid, gd->kernel_denoiseprofile_finish, 1, sizeof(cl_mem), (void *)&dev_U2);
@@ -1689,7 +2117,7 @@ static int process_wavelets_cl(struct dt_iop_module_t *self, dt_dev_pixelpipe_io
   dev_r = dt_opencl_alloc_device_buffer(devid, (size_t)reducesize * 4 * sizeof(float));
   if(dev_r == NULL) goto error;
 
-  sumsum = dt_alloc_align(16, (size_t)reducesize * 4 * sizeof(float));
+  sumsum = dt_alloc_align(64, (size_t)reducesize * 4 * sizeof(float));
   if(sumsum == NULL) goto error;
 
   dev_tmp = dt_opencl_alloc_device(devid, width, height, 4 * sizeof(float));
@@ -1709,9 +2137,36 @@ static int process_wavelets_cl(struct dt_iop_module_t *self, dt_dev_pixelpipe_io
     if(dev_detail[k] == NULL) goto error;
   }
 
-  const float wb[4] = { 2.0f * piece->pipe->dsc.processed_maximum[0] * d->strength * (scale * scale),
-                        piece->pipe->dsc.processed_maximum[1] * d->strength * (scale * scale),
-                        2.0f * piece->pipe->dsc.processed_maximum[2] * d->strength * (scale * scale), 0.0f };
+  const float wb_mean = (piece->pipe->dsc.temperature.coeffs[0] + piece->pipe->dsc.temperature.coeffs[1]
+                         + piece->pipe->dsc.temperature.coeffs[2])
+                        / 3.0f;
+  // we init wb by the mean of the coeffs, which corresponds to the mean
+  // amplification that is done in addition to the "ISO" related amplification
+  float wb[4] = { wb_mean, wb_mean, wb_mean, 0.0f };
+  if(d->fix_anscombe_and_nlmeans_norm)
+  {
+    if(wb_mean != 0.0f && d->wb_adaptive_anscombe)
+    {
+      for(int i = 0; i < 3; i++) wb[i] = piece->pipe->dsc.temperature.coeffs[i];
+    }
+    else if(wb_mean == 0.0f)
+    {
+      // temperature coeffs are equal to 0 if we open a JPG image.
+      // in this case consider them equal to 1.
+      for(int i = 0; i < 3; i++) wb[i] = 1.0f;
+    }
+    // else, wb_adaptive_anscombe is false and our wb array is
+    // filled with the wb_mean
+  }
+  else
+  {
+    wb[0] = 2.0f * piece->pipe->dsc.processed_maximum[0];
+    wb[1] = piece->pipe->dsc.processed_maximum[1];
+    wb[2] = 2.0f * piece->pipe->dsc.processed_maximum[2];
+  }
+  // update the coeffs with strength and scale
+  for(int i = 0; i < 3; i++) wb[i] *= d->strength * (scale * scale);
+
   const float aa[4] = { d->a[1] * wb[0], d->a[1] * wb[1], d->a[1] * wb[2], 1.0f };
   const float bb[4] = { d->b[1] * wb[0], d->b[1] * wb[1], d->b[1] * wb[2], 1.0f };
   const float sigma2[4] = { (bb[0] / aa[0]) * (bb[0] / aa[0]), (bb[1] / aa[1]) * (bb[1] / aa[1]),
@@ -1944,7 +2399,6 @@ error:
   return FALSE;
 }
 
-
 int process_cl(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, cl_mem dev_in, cl_mem dev_out,
                const dt_iop_roi_t *const roi_in, const dt_iop_roi_t *const roi_out)
 {
@@ -1954,9 +2408,14 @@ int process_cl(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, cl_m
   {
     return process_nlmeans_cl(self, piece, dev_in, dev_out, roi_in, roi_out);
   }
-  else
+  else if(d->mode == MODE_WAVELETS)
   {
     return process_wavelets_cl(self, piece, dev_in, dev_out, roi_in, roi_out);
+  }
+  else
+  {
+    dt_print(DT_DEBUG_OPENCL, "[opencl_denoiseprofile] compute variance not yet supported by opencl code\n");
+    return FALSE;
   }
 }
 #endif // HAVE_OPENCL
@@ -1967,8 +2426,10 @@ void process(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, const 
   dt_iop_denoiseprofile_params_t *d = (dt_iop_denoiseprofile_params_t *)piece->data;
   if(d->mode == MODE_NLMEANS)
     process_nlmeans(self, piece, ivoid, ovoid, roi_in, roi_out);
-  else
+  else if(d->mode == MODE_WAVELETS)
     process_wavelets(self, piece, ivoid, ovoid, roi_in, roi_out, eaw_decompose, eaw_synthesize);
+  else
+    process_variance(self, piece, ivoid, ovoid, roi_in, roi_out);
 }
 
 #if defined(__SSE2__)
@@ -1978,8 +2439,10 @@ void process_sse2(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, c
   dt_iop_denoiseprofile_params_t *d = (dt_iop_denoiseprofile_params_t *)piece->data;
   if(d->mode == MODE_NLMEANS)
     process_nlmeans_sse(self, piece, ivoid, ovoid, roi_in, roi_out);
-  else
+  else if(d->mode == MODE_WAVELETS)
     process_wavelets(self, piece, ivoid, ovoid, roi_in, roi_out, eaw_decompose_sse, eaw_synthesize_sse2);
+  else
+    process_variance(self, piece, ivoid, ovoid, roi_in, roi_out);
 }
 #endif
 
@@ -2016,6 +2479,7 @@ void reload_defaults(dt_iop_module_t *module)
       }
       if(last && last->iso < iso && current->iso > iso)
       {
+        g->interpolated.iso = iso;
         dt_noiseprofile_interpolate(last, current, &g->interpolated);
         // signal later autodetection in commit_params:
         g->interpolated.a[0] = -1.0f;
@@ -2032,10 +2496,14 @@ void reload_defaults(dt_iop_module_t *module)
       dt_bauhaus_combobox_add(g->profile, profile->name);
     }
 
+    ((dt_iop_denoiseprofile_params_t *)module->default_params)->wb_adaptive_anscombe = TRUE;
     ((dt_iop_denoiseprofile_params_t *)module->default_params)->radius = 1.0f;
     ((dt_iop_denoiseprofile_params_t *)module->default_params)->nbhood = 7.0f;
+    ((dt_iop_denoiseprofile_params_t *)module->default_params)->scattering = 0.0f;
+    ((dt_iop_denoiseprofile_params_t *)module->default_params)->central_pixel_weight = 0.0f;
     ((dt_iop_denoiseprofile_params_t *)module->default_params)->strength = 1.0f;
     ((dt_iop_denoiseprofile_params_t *)module->default_params)->mode = MODE_NLMEANS;
+    ((dt_iop_denoiseprofile_params_t *)module->default_params)->fix_anscombe_and_nlmeans_norm = TRUE;
     for(int k = 0; k < 3; k++)
     {
       ((dt_iop_denoiseprofile_params_t *)module->default_params)->a[k] = g->interpolated.a[k];
@@ -2050,7 +2518,6 @@ void init(dt_iop_module_t *module)
 {
   module->params = calloc(1, sizeof(dt_iop_denoiseprofile_params_t));
   module->default_params = calloc(1, sizeof(dt_iop_denoiseprofile_params_t));
-  module->priority = 128; // module order created by iop_dependencies.py, do not edit!
   module->params_size = sizeof(dt_iop_denoiseprofile_params_t);
   module->gui_data = NULL;
   module->data = NULL;
@@ -2064,6 +2531,8 @@ void init(dt_iop_module_t *module)
       tmp.y[ch][k] = 0.5f;
     }
   }
+  tmp.fix_anscombe_and_nlmeans_norm = TRUE;
+  tmp.wb_adaptive_anscombe = TRUE;
   memcpy(module->params, &tmp, sizeof(dt_iop_denoiseprofile_params_t));
   memcpy(module->default_params, &tmp, sizeof(dt_iop_denoiseprofile_params_t));
 }
@@ -2130,6 +2599,7 @@ static dt_noiseprofile_t dt_iop_denoiseprofile_get_auto_profile(dt_iop_module_t 
     }
     if(last && last->iso < iso && current->iso > iso)
     {
+      interpolated.iso = iso;
       dt_noiseprofile_interpolate(last, current, &interpolated);
       break;
     }
@@ -2148,6 +2618,8 @@ void commit_params(struct dt_iop_module_t *self, dt_iop_params_t *params, dt_dev
 
   d->radius = p->radius;
   d->nbhood = p->nbhood;
+  d->scattering = p->scattering;
+  d->central_pixel_weight = p->central_pixel_weight;
   d->strength = p->strength;
   for(int i = 0; i < 3; i++)
   {
@@ -2179,6 +2651,9 @@ void commit_params(struct dt_iop_module_t *self, dt_iop_params_t *params, dt_dev
                             p->y[ch][DT_IOP_DENOISE_PROFILE_BANDS - 1]);
     dt_draw_curve_calc_values(d->curve[ch], 0.0, 1.0, DT_IOP_DENOISE_PROFILE_BANDS, NULL, d->force[ch]);
   }
+
+  d->wb_adaptive_anscombe = p->wb_adaptive_anscombe;
+  d->fix_anscombe_and_nlmeans_norm = p->fix_anscombe_and_nlmeans_norm;
 }
 
 void init_pipe(struct dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, dt_dev_pixelpipe_iop_t *piece)
@@ -2225,9 +2700,23 @@ static void mode_callback(GtkWidget *w, dt_iop_module_t *self)
   dt_iop_denoiseprofile_gui_data_t *g = (dt_iop_denoiseprofile_gui_data_t *)self->gui_data;
   p->mode = dt_bauhaus_combobox_get(w);
   if(p->mode == MODE_WAVELETS)
-    gtk_stack_set_visible_child_name(GTK_STACK(g->stack), "wavelets");
+  {
+    gtk_widget_hide(g->box_nlm);
+    gtk_widget_hide(g->box_variance);
+    gtk_widget_show_all(g->box_wavelets);
+  }
+  else if(p->mode == MODE_NLMEANS)
+  {
+    gtk_widget_hide(g->box_wavelets);
+    gtk_widget_hide(g->box_variance);
+    gtk_widget_show_all(g->box_nlm);
+  }
   else
-    gtk_stack_set_visible_child_name(GTK_STACK(g->stack), "nlm");
+  {
+    gtk_widget_hide(g->box_wavelets);
+    gtk_widget_hide(g->box_nlm);
+    gtk_widget_show_all(g->box_variance);
+  }
   dt_dev_add_history_item(darktable.develop, self, TRUE);
 }
 
@@ -2242,6 +2731,20 @@ static void nbhood_callback(GtkWidget *w, dt_iop_module_t *self)
 {
   dt_iop_denoiseprofile_params_t *p = self->params;
   p->nbhood = (int)dt_bauhaus_slider_get(w);
+  dt_dev_add_history_item(darktable.develop, self, TRUE);
+}
+
+static void scattering_callback(GtkWidget *w, dt_iop_module_t *self)
+{
+  dt_iop_denoiseprofile_params_t *p = self->params;
+  p->scattering = dt_bauhaus_slider_get(w);
+  dt_dev_add_history_item(darktable.develop, self, TRUE);
+}
+
+static void central_pixel_weight_callback(GtkWidget *w, dt_iop_module_t *self)
+{
+  dt_iop_denoiseprofile_params_t *p = self->params;
+  p->central_pixel_weight = dt_bauhaus_slider_get(w);
   dt_dev_add_history_item(darktable.develop, self, TRUE);
 }
 
@@ -2260,12 +2763,32 @@ void gui_update(dt_iop_module_t *self)
   dt_bauhaus_slider_set_soft(g->radius, p->radius);
   dt_bauhaus_slider_set(g->nbhood, p->nbhood);
   dt_bauhaus_slider_set_soft(g->strength, p->strength);
-  dt_bauhaus_combobox_set(g->mode, p->mode);
+  dt_bauhaus_slider_set_soft(g->scattering, p->scattering);
+  dt_bauhaus_slider_set_soft(g->central_pixel_weight, p->central_pixel_weight);
   dt_bauhaus_combobox_set(g->profile, -1);
   if(p->mode == MODE_WAVELETS)
-    gtk_stack_set_visible_child_name(GTK_STACK(g->stack), "wavelets");
-  else
-    gtk_stack_set_visible_child_name(GTK_STACK(g->stack), "nlm");
+  {
+    gtk_widget_hide(g->box_nlm);
+    gtk_widget_hide(g->box_variance);
+    gtk_widget_show_all(g->box_wavelets);
+  }
+  else if(p->mode == MODE_NLMEANS)
+  {
+    gtk_widget_hide(g->box_wavelets);
+    gtk_widget_hide(g->box_variance);
+    gtk_widget_show_all(g->box_nlm);
+  }
+  else if(p->mode == MODE_VARIANCE)
+  {
+    gtk_widget_hide(g->box_wavelets);
+    gtk_widget_hide(g->box_nlm);
+    gtk_widget_show_all(g->box_variance);
+    if(dt_bauhaus_combobox_length(g->mode) == 2)
+    {
+      dt_bauhaus_combobox_add(g->mode, _("compute variance"));
+    }
+  }
+  dt_bauhaus_combobox_set(g->mode, p->mode);
   if(p->a[0] == -1.0)
   {
     dt_bauhaus_combobox_set(g->profile, 0);
@@ -2284,6 +2807,16 @@ void gui_update(dt_iop_module_t *self)
       }
     }
   }
+  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(g->wb_adaptive_anscombe), p->wb_adaptive_anscombe);
+  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(g->fix_anscombe_and_nlmeans_norm), p->fix_anscombe_and_nlmeans_norm);
+  gtk_widget_set_visible(g->fix_anscombe_and_nlmeans_norm, !p->fix_anscombe_and_nlmeans_norm);
+}
+
+void gui_reset(dt_iop_module_t *self)
+{
+  dt_iop_denoiseprofile_gui_data_t *g = (dt_iop_denoiseprofile_gui_data_t *)self->gui_data;
+  dt_iop_denoiseprofile_params_t *p = (dt_iop_denoiseprofile_params_t *)self->params;
+  gtk_widget_set_visible(g->fix_anscombe_and_nlmeans_norm, !p->fix_anscombe_and_nlmeans_norm);
 }
 
 static void dt_iop_denoiseprofile_get_params(dt_iop_denoiseprofile_params_t *p, const int ch, const double mouse_x,
@@ -2294,6 +2827,40 @@ static void dt_iop_denoiseprofile_get_params(dt_iop_denoiseprofile_params_t *p, 
     const float f = expf(-(mouse_x - p->x[ch][k]) * (mouse_x - p->x[ch][k]) / (rad * rad));
     p->y[ch][k] = (1 - f) * p->y[ch][k] + f * mouse_y;
   }
+}
+
+static gboolean denoiseprofile_draw_variance(GtkWidget *widget, cairo_t *crf, gpointer user_data)
+{
+  if(darktable.gui->reset) return FALSE;
+
+  dt_iop_module_t *self = (dt_iop_module_t *)user_data;
+  dt_iop_denoiseprofile_gui_data_t *c = (dt_iop_denoiseprofile_gui_data_t *)self->gui_data;
+
+  if(!isnan(c->variance_R))
+  {
+    gchar *str = g_strdup_printf("%.2f", c->variance_R);
+    darktable.gui->reset = 1;
+    gtk_label_set_text(c->label_var_R, str);
+    darktable.gui->reset = 0;
+    g_free(str);
+  }
+  if(!isnan(c->variance_G))
+  {
+    gchar *str = g_strdup_printf("%.2f", c->variance_G);
+    darktable.gui->reset = 1;
+    gtk_label_set_text(c->label_var_G, str);
+    darktable.gui->reset = 0;
+    g_free(str);
+  }
+  if(!isnan(c->variance_B))
+  {
+    gchar *str = g_strdup_printf("%.2f", c->variance_B);
+    darktable.gui->reset = 1;
+    gtk_label_set_text(c->label_var_B, str);
+    darktable.gui->reset = 0;
+    g_free(str);
+  }
+  return FALSE;
 }
 
 static gboolean denoiseprofile_draw(GtkWidget *widget, cairo_t *crf, gpointer user_data)
@@ -2607,6 +3174,22 @@ static void denoiseprofile_tab_switch(GtkNotebook *notebook, GtkWidget *page, gu
   gtk_widget_queue_draw(self->widget);
 }
 
+static void wb_adaptive_anscombe_callback(GtkWidget *widget, dt_iop_module_t *self)
+{
+  if(darktable.gui->reset) return;
+  dt_iop_denoiseprofile_params_t *p = (dt_iop_denoiseprofile_params_t *)self->params;
+  p->wb_adaptive_anscombe = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget));
+  dt_dev_add_history_item(darktable.develop, self, TRUE);
+}
+
+static void fix_anscombe_and_nlmeans_norm_callback(GtkWidget *widget, dt_iop_module_t *self)
+{
+  if(darktable.gui->reset) return;
+  dt_iop_denoiseprofile_params_t *p = (dt_iop_denoiseprofile_params_t *)self->params;
+  p->fix_anscombe_and_nlmeans_norm = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget));
+  dt_dev_add_history_item(darktable.develop, self, TRUE);
+}
+
 void gui_init(dt_iop_module_t *self)
 {
   // init the slider (more sophisticated layouts are possible with gtk tables and boxes):
@@ -2621,18 +3204,54 @@ void gui_init(dt_iop_module_t *self)
   g->radius = dt_bauhaus_slider_new_with_range(self, 0.0f, 4.0f, 1.f, 1.f, 0);
   dt_bauhaus_slider_enable_soft_boundaries(g->radius, 0.0, 10.0);
   g->nbhood = dt_bauhaus_slider_new_with_range(self, 1.0f, 30.0f, 1.f, 7.f, 0);
+  g->scattering = dt_bauhaus_slider_new_with_range(self, 0.0f, 0.5f, 0.01, 0.0f, 2);
+  dt_bauhaus_slider_enable_soft_boundaries(g->scattering, 0.0, 2.0);
+  g->central_pixel_weight = dt_bauhaus_slider_new_with_range(self, 0.0f, 1.0f, 0.01, 0.0f, 2);
+  dt_bauhaus_slider_enable_soft_boundaries(g->central_pixel_weight, 0.0, 10.0);
   g->strength = dt_bauhaus_slider_new_with_range(self, 0.001f, 4.0f, .05, 1.f, 3);
   dt_bauhaus_slider_enable_soft_boundaries(g->strength, 0.001f, 1000.0f);
   g->channel = dt_conf_get_int("plugins/darkroom/denoiseprofile/gui_channel");
 
-  gtk_box_pack_start(GTK_BOX(self->widget), g->profile, TRUE, TRUE, 0);
-  gtk_box_pack_start(GTK_BOX(self->widget), g->mode, TRUE, TRUE, 0);
-
   g->box_nlm = gtk_box_new(GTK_ORIENTATION_VERTICAL, DT_BAUHAUS_SPACE);
   g->box_wavelets = gtk_box_new(GTK_ORIENTATION_VERTICAL, DT_BAUHAUS_SPACE);
+  g->box_variance = gtk_box_new(GTK_ORIENTATION_VERTICAL, DT_BAUHAUS_SPACE);
 
   gtk_box_pack_start(GTK_BOX(g->box_nlm), g->radius, TRUE, TRUE, 0);
   gtk_box_pack_start(GTK_BOX(g->box_nlm), g->nbhood, TRUE, TRUE, 0);
+  gtk_box_pack_start(GTK_BOX(g->box_nlm), g->scattering, TRUE, TRUE, 0);
+  gtk_box_pack_start(GTK_BOX(g->box_nlm), g->central_pixel_weight, TRUE, TRUE, 0);
+
+  g->label_var = GTK_LABEL(gtk_label_new(_("use only with a perfectly\n"
+                                           "uniform image if you want to\n"
+                                           "estimate the noise variance.")));
+  gtk_widget_set_halign(GTK_WIDGET(g->label_var), GTK_ALIGN_START);
+  gtk_box_pack_start(GTK_BOX(g->box_variance), GTK_WIDGET(g->label_var), TRUE, TRUE, 0);
+
+  GtkBox *hboxR = GTK_BOX(gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0));
+  GtkLabel *labelR = GTK_LABEL(gtk_label_new(_("variance red: ")));
+  gtk_box_pack_start(GTK_BOX(hboxR), GTK_WIDGET(labelR), FALSE, FALSE, 0);
+  g->label_var_R = GTK_LABEL(gtk_label_new("")); // This gets filled in by process
+  gtk_widget_set_tooltip_text(GTK_WIDGET(g->label_var_R), _("variance computed on the red channel"));
+  gtk_box_pack_start(GTK_BOX(hboxR), GTK_WIDGET(g->label_var_R), FALSE, FALSE, 0);
+  gtk_box_pack_start(GTK_BOX(g->box_variance), GTK_WIDGET(hboxR), TRUE, TRUE, 0);
+
+  GtkBox *hboxG = GTK_BOX(gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0));
+  GtkLabel *labelG = GTK_LABEL(gtk_label_new(_("variance green: ")));
+  gtk_box_pack_start(GTK_BOX(hboxG), GTK_WIDGET(labelG), FALSE, FALSE, 0);
+  g->label_var_G = GTK_LABEL(gtk_label_new("")); // This gets filled in by process
+  gtk_widget_set_tooltip_text(GTK_WIDGET(g->label_var_G), _("variance computed on the green channel"));
+  gtk_box_pack_start(GTK_BOX(hboxG), GTK_WIDGET(g->label_var_G), FALSE, FALSE, 0);
+  gtk_box_pack_start(GTK_BOX(g->box_variance), GTK_WIDGET(hboxG), TRUE, TRUE, 0);
+
+  GtkBox *hboxB = GTK_BOX(gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0));
+  GtkLabel *labelB = GTK_LABEL(gtk_label_new(_("variance blue: ")));
+  gtk_box_pack_start(GTK_BOX(hboxB), GTK_WIDGET(labelB), FALSE, FALSE, 0);
+  g->label_var_B = GTK_LABEL(gtk_label_new("")); // This gets filled in by process
+  gtk_widget_set_tooltip_text(GTK_WIDGET(g->label_var_B), _("variance computed on the blue channel"));
+  gtk_box_pack_start(GTK_BOX(hboxB), GTK_WIDGET(g->label_var_B), FALSE, FALSE, 0);
+  gtk_box_pack_start(GTK_BOX(g->box_variance), GTK_WIDGET(hboxB), TRUE, TRUE, 0);
+
+  g_signal_connect(G_OBJECT(g->box_variance), "draw", G_CALLBACK(denoiseprofile_draw_variance), self);
 
   g->channel_tabs = GTK_NOTEBOOK(gtk_notebook_new());
 
@@ -2677,37 +3296,82 @@ void gui_init(dt_iop_module_t *self)
   g_signal_connect(G_OBJECT(g->area), "leave-notify-event", G_CALLBACK(denoiseprofile_leave_notify), self);
   g_signal_connect(G_OBJECT(g->area), "scroll-event", G_CALLBACK(denoiseprofile_scrolled), self);
 
-  g->stack = gtk_stack_new();
-  gtk_stack_set_homogeneous(GTK_STACK(g->stack), FALSE);
-  gtk_box_pack_start(GTK_BOX(self->widget), g->stack, TRUE, TRUE, 0);
+  g->wb_adaptive_anscombe = gtk_check_button_new_with_label(_("whitebalance-adaptive transform"));
+  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(g->wb_adaptive_anscombe), p->wb_adaptive_anscombe);
+  gtk_widget_set_tooltip_text(g->wb_adaptive_anscombe, _("adapt denoising according to the\n"
+                                                         "white balance coefficients.\n"
+                                                         "should be enabled on a first instance\n"
+                                                         "for better denoising.\n"
+                                                         "should be disabled if an earlier instance\n"
+                                                         "has been used with a color blending mode."));
+  g_signal_connect(G_OBJECT(g->wb_adaptive_anscombe), "toggled", G_CALLBACK(wb_adaptive_anscombe_callback), self);
+
+
+  gtk_box_pack_start(GTK_BOX(self->widget), g->profile, TRUE, TRUE, 0);
+  gtk_box_pack_start(GTK_BOX(self->widget), g->wb_adaptive_anscombe, TRUE, TRUE, 0);
+  gtk_box_pack_start(GTK_BOX(self->widget), g->mode, TRUE, TRUE, 0);
+  gtk_box_pack_start(GTK_BOX(self->widget), g->box_nlm, TRUE, TRUE, 0);
+  gtk_box_pack_start(GTK_BOX(self->widget), g->box_wavelets, TRUE, TRUE, 0);
+  gtk_box_pack_start(GTK_BOX(self->widget), g->strength, TRUE, TRUE, 0);
+  gtk_box_pack_start(GTK_BOX(self->widget), g->box_variance, TRUE, TRUE, 0);
+
+  g->fix_anscombe_and_nlmeans_norm = gtk_check_button_new_with_label(_("migrate to fixed algorithm"));
+  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(g->fix_anscombe_and_nlmeans_norm), p->fix_anscombe_and_nlmeans_norm);
+  gtk_widget_set_tooltip_text(g->fix_anscombe_and_nlmeans_norm, _("fix bugs in anscombe transform resulting\n"
+                                                 "in undersmoothing of the green channel in\n"
+                                                 "wavelets mode, combined with a bad handling\n"
+                                                 "of white balance coefficients, and a bug in\n"
+                                                 "non local means normalization resulting in\n"
+                                                 "undersmoothing when patch size was increased.\n"
+                                                 "enabling this option will change the denoising\n"
+                                                 "you get. once enabled, you won't be able to\n"
+                                                 "return back to old algorithm."));
+  gtk_box_pack_start(GTK_BOX(self->widget), g->fix_anscombe_and_nlmeans_norm, TRUE, TRUE, 0);
+  g_signal_connect(G_OBJECT(g->fix_anscombe_and_nlmeans_norm), "toggled", G_CALLBACK(fix_anscombe_and_nlmeans_norm_callback), self);
 
   gtk_widget_show_all(g->box_nlm);
   gtk_widget_show_all(g->box_wavelets);
-  gtk_stack_add_named(GTK_STACK(g->stack), g->box_nlm, "nlm");
-  gtk_stack_add_named(GTK_STACK(g->stack), g->box_wavelets, "wavelets");
-  gtk_stack_set_visible_child_name(GTK_STACK(g->stack), "nlm");
+  gtk_widget_show_all(g->box_variance);
 
-  gtk_box_pack_start(GTK_BOX(self->widget), g->strength, TRUE, TRUE, 0);
   dt_bauhaus_widget_set_label(g->profile, NULL, _("profile"));
   dt_bauhaus_widget_set_label(g->mode, NULL, _("mode"));
   dt_bauhaus_widget_set_label(g->radius, NULL, _("patch size"));
   dt_bauhaus_slider_set_format(g->radius, "%.0f");
   dt_bauhaus_widget_set_label(g->nbhood, NULL, _("search radius"));
   dt_bauhaus_slider_set_format(g->nbhood, "%.0f");
+  dt_bauhaus_widget_set_label(g->scattering, NULL, _("scattering (coarse-grain noise)"));
+  dt_bauhaus_widget_set_label(g->central_pixel_weight, NULL, _("central pixel weight (details)"));
   dt_bauhaus_widget_set_label(g->strength, NULL, _("strength"));
   dt_bauhaus_combobox_add(g->mode, _("non-local means"));
   dt_bauhaus_combobox_add(g->mode, _("wavelets"));
+  const gboolean compute_variance = dt_conf_get_bool("plugins/darkroom/denoiseprofile/show_compute_variance_mode");
+  if(compute_variance)
+  {
+    dt_bauhaus_combobox_add(g->mode, _("compute variance"));
+  }
   gtk_widget_set_tooltip_text(g->profile, _("profile used for variance stabilization"));
   gtk_widget_set_tooltip_text(g->mode, _("method used in the denoising core. "
                                          "non-local means works best for `lightness' blending, "
                                          "wavelets work best for `color' blending"));
-  gtk_widget_set_tooltip_text(g->radius, _("radius of the patches to match. increase for more sharpness"));
+  gtk_widget_set_tooltip_text(g->radius, _("radius of the patches to match.\n"
+                                           "increase for more sharpness on strong edges, and better denoising of smooth areas.\n"
+                                           "if details are oversmoothed, reduce this value or increase the details slider."));
   gtk_widget_set_tooltip_text(g->nbhood, _("emergency use only: radius of the neighbourhood to search patches in. increase for better denoising performance, but watch the long runtimes! large radii can be very slow. you have been warned"));
+  gtk_widget_set_tooltip_text(g->scattering,
+                              _("scattering of the neighbourhood to search patches in. increase for better "
+                                "coarse-grain noise reduction. does not affect execution time."));
+  gtk_widget_set_tooltip_text(g->central_pixel_weight, _("increase the weight of the central pixel\n"
+                                                         "of the patch in the patch comparison.\n"
+                                                         "useful to recover details when patch size\n"
+                                                         "is quite big."));
   gtk_widget_set_tooltip_text(g->strength, _("finetune denoising strength"));
   g_signal_connect(G_OBJECT(g->profile), "value-changed", G_CALLBACK(profile_callback), self);
   g_signal_connect(G_OBJECT(g->mode), "value-changed", G_CALLBACK(mode_callback), self);
   g_signal_connect(G_OBJECT(g->radius), "value-changed", G_CALLBACK(radius_callback), self);
   g_signal_connect(G_OBJECT(g->nbhood), "value-changed", G_CALLBACK(nbhood_callback), self);
+  g_signal_connect(G_OBJECT(g->scattering), "value-changed", G_CALLBACK(scattering_callback), self);
+  g_signal_connect(G_OBJECT(g->central_pixel_weight), "value-changed", G_CALLBACK(central_pixel_weight_callback),
+                   self);
   g_signal_connect(G_OBJECT(g->strength), "value-changed", G_CALLBACK(strength_callback), self);
 }
 

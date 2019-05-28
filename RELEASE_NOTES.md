@@ -17,26 +17,229 @@ when updating from the currently stable 2.4.x series, please bear in mind that y
 
 #### Important note: to make sure that darktable can keep on supporting the raw file format for your camera, *please* read [this post](https://discuss.pixls.us/t/raw-samples-wanted/5420?u=lebedevri) on how/what raw samples you can contribute to ensure that we have the *full* raw sample set for your camera under CC0 license!
 
-- Over 1600 commits to darktable+rawspeed since 2.6
-- 260+ pull requests handled
-- 250+ issues closed
+- Over ??? commits to darktable+rawspeed since 2.6
+- ???+ pull requests handled
+- ???+ issues closed
 - Updated user manual is coming soon™
 
 ## The Big Ones
 
-- No changes
+- A full rework of the GUI Gtk/CSS. The whole GUI is now fully
+  controlled by CSS rules. There is no more size, color, position in
+  Gtk C code. This makes the whole GUI themable. This version comes
+  with different theme:
+
+     - darktable              : the default theme
+
+     - darktable-elegant      : more condensed fonts
+                                best experience if Roboto font installed
+
+     - darktable-icons        : as elegant, with IOP icons
+                                best experience if Roboto font installed
+
+     - darktable-elegant-grey : as above but grey instead of dark
+
+     - darktable-icons-grey   : as above but grey instead of dark
+
+  Note that this requires Gtk 3.22 or higher to work properly.
+
+- The color picker on the blend, tone curve, color zones and fill
+  light modules now allows to select an area by ctrl+click on it.
+
+- Add undo/redo support in lighttable for tags, color labels, rating,
+  metadata, deleted history stack, pasted history stack and applied
+  style.
+
+  IMPORTANT:
+  As ctrl-z is commonly used for undo/redo this is what is used
+  on the lighttable. This conflicts with the previous ctrl-z which
+  was assigned to preview with focus point. The preview (previously z)
+  and preview with focus detection (previously ctrl-z) are now assigned
+  respectively to w and ctrl-w.
+
+- A new timeline view has been introduced in the lighttable.
+
+- A new exposé lighttable's mode to be used to compare multiple images.
+
+- A new lighttable mode 'culling' is added. It displays a fixed number
+  of consecutive images, starting from the first selected image and
+  allows to pan & zoom them.  It can be navigated with the mouse wheel
+  and keyboard and the number of displayed images can be set with an
+  entry at the bottom.
+
+- A quite extensive rewrite of the lighttable has been made to improve
+  drastically the overall performance. This also includes the
+  filmstrip which has also received a big rewrite for the same reasons. The
+  lighttable is now usable on 4K and 5K monitors.
+
+- Add new raster mask supports. This is a copy of a parametric mask
+  which is stable during the whole pixel-pipe.
+
+- Modules can now be re-ordered with shift+drag.
+
+- The color zones module now display an histogram based on the ‘select
+  by’ channel and displays the selected range if the color picker is
+  in area mode.
+  It acts now like the tone curve (but horizontal),
+  it has two edit modes: edit by area is the former one, if not checked nodes
+  can be edited like in the tone curve, delete only works by right-click
+  when not in edit area mode.
+  A new process mode has been added: smooth is the former one, strong is new.
+  An interpolation method has been added that allows to select different types
+  of curves.
+  The color picker allows to select by area with ctrl+click.
+  A new color picker has been added that creates a curve based on the area
+  selected from the image.
+  When pressing the shortcut 'pan&zoom while editing masks' the draw area
+  can now be zoomed. Double-click on the bottom bar resets the zoom.
 
 ## New Features And Changes
 
-- No changes
+- A new module for handling 3D Lut transformations (PNG Hald-CLUT and
+  Cube files are supported).
+
+- A new profile ‘histogram profile’ has been added on the same pop-up
+  that the softproof one on the darkroom. It controls the color space
+  of the histogram, color picker and overexposed check. When gamut or
+  softproof checks are active the histogram and color picker use the
+  softproof profile, otherwise they use the histogram profile. The
+  overexposed check always use the histogram profile.
+
+- A new profile 'work profile' has been added to the input color profile
+  module. Now RGB modules between the input and output color profile modules
+  will work with this profile.
+
+- A new color picker has been added to the blend module next to the
+  existing one that adjusts the range sliders based on the selected
+  area from the image. Click to adjust the input image slider,
+  ctrl+click to adjust the out image one.
+
+- The picasa module has been renamed to googlephoto and completely
+  rewrote to support the new Google Photo API. It is now again
+  possible to create albums directly from the export module.
+
+- New module image information which can be positioned at the bottom
+  or the top of the darkroom. The information displayed can be changed
+  via the preferences. This module can replace the image information
+  displayed on the histogram.
+
+- Many code optimizations for CPU and SSE paths.
+
+- A new preference to expand/collapse a darkroom module when it is
+  activated/deactivated.
+
+- The collect module supports single click if the corresponding new
+  option is activated.
+
+- The collect module supports range selection (for numeric/dates)
+  when using single click mode.
+
+- Add option to scatter the search zone in denoise profile non local
+  means mode.
+
+- The gradient mask orientation is now clearly displayed by using an
+  arrow.
+
+- Add support for theme, and allow to dynamically load theme from the
+  preferences.
+
+- The graduatednd module has better accuracy when computing the
+  rotation to avoid the gradient to flip sporadically.
+
+- Make sure the OpenCL kernel code are recompiled when the driver
+  version is updated.
+
+- Add color pickers in the split toning module.
+
+- Add color pickers in the graduateddnd module.
+
+- Add color picker to the watermark module.
+
+- The color picker point positions are kept during the editing on the
+  module.
+
+- The map view will zoom on the images of the selected collection.
+
+- The slideshow supports changing the delay between each images.
+
+- The slideshow will now start at the selected pictures if any.
+
+- The slideshow will now be more responsive when changing the picture
+  backward and forward.
+
+- Add soft boundaries for denoise profile controls.
+
+- A new module 'basic adjustments' has been added. It allows to adjust
+  the exposure, highlight compression, contrast, brightness and saturation.
+  It also has an auto feature based on Rawtherapee's auto levels that can
+  work on the entire image or a user selected area.
+  Both the contrast and the auto feature use the middle grey point, the
+  default for this setting is based on the work profile.
+
+- A new module 'rgb curve' has been added. It has linked and
+  independent RGB channels.
+  It works with the rgb colorspace selected on the work profile.
+  The curves and histogram can be displayed using the work profile or
+  can be scaled to be 50% grey.
+  The color picker allows to select by area with ctrl+click.
+  The second color picker add 4 nodes to the curve based on the area
+  selected from the image: min, average, middle, max.
+  When pressing the shortcut 'pan&zoom while editing masks' the draw area
+  can be zoomed.
+  Different types of curves can be selected.
+
+- A search text has been added to the module groups in the darkroom. It has a
+  config option to show only the modules groups, only the search text or both.
+  Modules are searched by name (localized).
+
+  If displaying only the search text, the active pipe modules are
+  displayed when the search text is empty.  A darkroom shortcut can be
+  set to focus on the search box.
+
+- A preview window has been added to the darkroom that displays the edited image
+  on a separate window.
+
+- A new option 'skip' is added to the 'on conflic' setting on the export module
+  that skips the export if the file already exists.
+
+- Allow to change algorithm clone/heal and blur/color in retouch module.
 
 ## Bug fixes
 
-- No changes
+- The color picker support has been fixed by a complete rewrite. It
+  should now gives correct values in all cases.
+
+- Fix overexposed display.
+
+- Do not disable SSL for storage modules.
+
+- A long standing bug on mask distort in Liquify module has been
+  fixed. This was visible when a liquify mask was used together with
+  the perspective correction module activated.
+
+- Fix manual crop in perspective correction module when not in default
+  orientation.
+
+- The modification of date/time is now stored into the XMP. This
+  ensure that removing the picture and reloading will keep the change
+  made.
+
+- Fix orientation to support all cases as exposed in these examples:
+  https://github.com/recurser/exif-orientation-examples
+
+- Store the panel states for each lighttable mode.
 
 ## Lua
 
-- No changes
+- The displayed image in darkroom view can now be changed
+
+- GUI panel visibility can now be queried and changed
+
+- Lighttable view toolbox (rating filter, rating comparator, sort field, and sort direction) can now be changed
+
+- Lighttable layout and zoom level can now be changed
+
+- All images containing a specific tag can be searched and returned
 
 ## Changed Dependencies
 

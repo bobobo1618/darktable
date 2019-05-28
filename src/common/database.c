@@ -20,6 +20,7 @@
 #include "common/database.h"
 #include "common/darktable.h"
 #include "common/debug.h"
+#include "common/iop_order.h"
 #include "control/conf.h"
 #include "control/control.h"
 #include "gui/legacy_presets.h"
@@ -37,8 +38,8 @@
 
 // whenever _create_*_schema() gets changed you HAVE to bump this version and add an update path to
 // _upgrade_*_schema_step()!
-#define CURRENT_DATABASE_VERSION_LIBRARY 17
-#define CURRENT_DATABASE_VERSION_DATA 1
+#define CURRENT_DATABASE_VERSION_LIBRARY 19
+#define CURRENT_DATABASE_VERSION_DATA 2
 
 typedef struct dt_database_t
 {
@@ -977,7 +978,7 @@ static int _upgrade_library_schema_step(dt_database_t *db, int version)
     TRY_EXEC("CREATE INDEX main.image_position_index ON images (position)",
              "[init] can't create index for custom image order table\n");
 
-    // Set the initial image sequence. The image id - the sequece images were imported -
+    // Set the initial image sequence. The image id - the sequence images were imported -
     // defines the initial order of images.
     //
     // An int64 is used for the position index. The upper 31 bits define the initial order.
@@ -1003,12 +1004,160 @@ static int _upgrade_library_schema_step(dt_database_t *db, int version)
     sqlite3_exec(db->handle, "COMMIT", NULL, NULL, NULL);
     new_version = 17;
   }
+  else if(version == 17)
+  {
+    ////////////////////////////// masks history
+    TRY_EXEC("CREATE TABLE main.masks_history (imgid INTEGER, num INTEGER, formid INTEGER, form INTEGER, name VARCHAR(256), "
+             "version INTEGER, points BLOB, points_count INTEGER, source BLOB)",
+             "[init] can't create `masks_history` table\n");
+
+    TRY_EXEC("CREATE INDEX main.masks_history_imgid_index ON masks_history (imgid)",
+             "[init] can't create index `masks_history_imgid_index' in database\n");
+
+    // to speed up the mask look-up, and makes the following UPDATE instantaneous whereas it could takes hours
+    TRY_EXEC("CREATE INDEX main.mask_imgid_index ON mask (imgid);",
+             "[init] can't create index `mask_imgid_index' in database\n");
+
+    // create a mask manager entry on history for all images containing all forms
+    // make room for mask manager history entry
+    TRY_EXEC("UPDATE main.history SET num=num+1 WHERE imgid IN (SELECT imgid FROM main.mask WHERE main.mask.imgid=main.history.imgid)",
+             "[init] can't update `num' with num+1\n");
+
+    // update history end
+    TRY_EXEC("UPDATE main.images SET history_end = history_end+1 WHERE id IN (SELECT imgid FROM main.mask WHERE main.mask.imgid=main.images.id)",
+             "[init] can't update `history_end' with history_end+1\n");
+
+    // copy all masks into history
+    TRY_EXEC("INSERT INTO main.masks_history (imgid, num, formid, form, name, version, points, points_count, source) SELECT "
+             "imgid, 0, formid, form, name, version, points, points_count, source FROM main.mask",
+             "[init] can't insert into masks_history\n");
+
+    // create a mask manager entry for each image that has masks
+    TRY_EXEC("INSERT INTO main.history (imgid, num, operation, op_params, module, enabled, "
+             "blendop_params, blendop_version, multi_priority, multi_name) "
+             "SELECT DISTINCT imgid, 0, 'mask_manager', NULL, 1, 0, NULL, 0, 0, '' FROM main.mask "
+             "GROUP BY imgid",
+             "[init] can't insert mask manager into history\n");
+
+    TRY_EXEC("DROP TABLE main.mask", "[init] can't drop table `mask' from database\n");
+
+    ////////////////////////////// custom iop order
+    int iop_order_version = 1;
+    GList *prior_v1 = dt_ioppr_get_iop_order_list(&iop_order_version);
+
+    TRY_EXEC("ALTER TABLE main.images ADD COLUMN iop_order_version INTEGER",
+             "[init] can't add `iop_order_version' column to images table in database\n");
+
+    TRY_EXEC("UPDATE main.images SET iop_order_version = 0",
+             "[init] can't update iop_order_version in database\n");
+
+    TRY_EXEC("UPDATE main.images SET iop_order_version = 1 WHERE "
+             "EXISTS(SELECT * FROM main.history WHERE main.history.imgid = main.images.id)",
+             "[init] can't update iop_order_version in database\n");
+
+    TRY_EXEC("ALTER TABLE main.history ADD COLUMN iop_order REAL",
+             "[init] can't add `iop_order' column to history table in database\n");
+
+    // create a temp table with the previous priorities
+    TRY_EXEC("CREATE TEMPORARY TABLE iop_order_tmp (iop_order REAL, operation VARCHAR(256))",
+             "[init] can't create temporary table for updating `main.history'\n");
+
+    // fill temp table with all operations up to this release
+    // it will be used to create the pipe and update the iop_order on history
+    GList *priorities = g_list_first(prior_v1);
+    while(priorities)
+    {
+      dt_iop_order_entry_t *prior = (dt_iop_order_entry_t *)priorities->data;
+
+      sqlite3_prepare_v2(
+          db->handle,
+          "INSERT INTO iop_order_tmp (iop_order, operation) VALUES (?1, ?2)",
+          -1, &stmt, NULL);
+      sqlite3_bind_double(stmt, 1, prior->iop_order);
+      sqlite3_bind_text(stmt, 2, prior->operation, -1, SQLITE_TRANSIENT);
+      TRY_STEP(stmt, SQLITE_DONE, "[init] can't insert default value in iop_order_tmp\n");
+      sqlite3_finalize(stmt);
+
+      priorities = g_list_next(priorities);
+    }
+    g_list_free_full(prior_v1, free);
+
+    // create the order of the pipe
+    // iop_order is by default the module priority
+    // if there's multi-instances we add the multi_priority
+    // multi_priority is in reverse order in this version,
+    // so we assume that is always less than 1000 and reverse it
+    // it is possible that multi_priority = 0 don't appear in history
+    // so just in case 1 / 1000 to every instance
+    TRY_EXEC("UPDATE main.history SET iop_order = ((("
+        "SELECT MAX(multi_priority) FROM main.history hist1 WHERE hist1.imgid = main.history.imgid AND hist1.operation = main.history.operation "
+             ") + 1. - multi_priority) / 1000.) + "
+             "IFNULL((SELECT iop_order FROM iop_order_tmp WHERE iop_order_tmp.operation = "
+             "main.history.operation), -999999.) ",
+             "[init] can't update iop_order in history table\n");
+
+    // check if there's any entry in history that was not updated
+    sqlite3_stmt *sel_stmt;
+    TRY_PREPARE(sel_stmt, "SELECT DISTINCT operation FROM main.history WHERE iop_order <= 0 OR iop_order IS NULL",
+                "[init] can't prepare selecting history iop_order\n");
+    while(sqlite3_step(sel_stmt) == SQLITE_ROW)
+    {
+      const char *op_name = (const char *)sqlite3_column_text(sel_stmt, 0);
+      printf("operation %s with no iop_order while upgrading database\n", op_name);
+    }
+    sqlite3_finalize(sel_stmt);
+
+    // do the same as for history
+    TRY_EXEC("UPDATE data.style_items SET iop_order = ((("
+        "SELECT MAX(multi_priority) FROM data.style_items style1 WHERE style1.styleid = data.style_items.styleid AND style1.operation = data.style_items.operation "
+             ") + 1. - multi_priority) / 1000.) + "
+             "IFNULL((SELECT iop_order FROM iop_order_tmp WHERE iop_order_tmp.operation = "
+             "data.style_items.operation), -999999.) ",
+             "[init] can't update iop_order in style_items table\n");
+
+    TRY_PREPARE(sel_stmt, "SELECT DISTINCT operation FROM data.style_items WHERE iop_order <= 0 OR iop_order IS NULL",
+                "[init] can't prepare selecting style_items iop_order\n");
+    while(sqlite3_step(sel_stmt) == SQLITE_ROW)
+    {
+      const char *op_name = (const char *)sqlite3_column_text(sel_stmt, 0);
+      printf("operation %s with no iop_order while upgrading style_items in database\n", op_name);
+    }
+    sqlite3_finalize(sel_stmt);
+
+    TRY_EXEC("DROP TABLE iop_order_tmp", "[init] can't drop table `iop_order_tmp' from database\n");
+
+    sqlite3_exec(db->handle, "COMMIT", NULL, NULL, NULL);
+    new_version = 18;
+  }
   // maybe in the future, see commented out code elsewhere
   //   else if(version == XXX)
   //   {
   //     sqlite3_exec(db->handle, "ALTER TABLE film_rolls ADD COLUMN external_drive VARCHAR(1024)", NULL,
   //     NULL, NULL);
   //   }
+  else if(version == 18)
+  {
+    TRY_EXEC("UPDATE images SET orientation=-2 WHERE orientation=1;",
+             "[init] can't update images orientation 1 from database\n");
+
+    TRY_EXEC("UPDATE images SET orientation=1 WHERE orientation=2;",
+             "[init] can't update images orientation 2 from database\n");
+
+    TRY_EXEC("UPDATE images SET orientation=-6 WHERE orientation=5;",
+             "[init] can't update images orientation 5 from database\n");
+
+    TRY_EXEC("UPDATE images SET orientation=5 WHERE orientation=6;",
+             "[init] can't update images orientation 6 from database\n");
+
+    TRY_EXEC("UPDATE images SET orientation=2 WHERE orientation=-2;",
+             "[init] can't update images orientation -1 from database\n");
+
+    TRY_EXEC("UPDATE images SET orientation=6 WHERE orientation=-6;",
+             "[init] can't update images orientation -6 from database\n");
+
+    sqlite3_exec(db->handle, "COMMIT", NULL, NULL, NULL);
+    new_version = 19;
+  }
   else
     new_version = version; // should be the fallback so that calling code sees that we are in an infinite loop
 
@@ -1021,12 +1170,6 @@ static int _upgrade_library_schema_step(dt_database_t *db, int version)
 
   return new_version;
 }
-
-#undef FINALIZE
-
-#undef TRY_EXEC
-#undef TRY_STEP
-#undef TRY_PREPARE
 
 /* do the real migration steps, returns the version the db was converted to */
 static int _upgrade_data_schema_step(dt_database_t *db, int version)
@@ -1042,6 +1185,15 @@ static int _upgrade_data_schema_step(dt_database_t *db, int version)
     new_version = 1; // the version we transformed the db to. this way it might be possible to roll back or
     // add fast paths
   }
+  else if(version == 1)
+  {
+    // style_items:
+    //    NO TRY_EXEC has the column could be there before version 1 (master build)
+    //    TRY_EXEC("ALTER TABLE data.style_items ADD COLUMN iop_order REAL",
+    //             "[init] can't add `iop_order' column to style_items table in database\n");
+    sqlite3_exec(db->handle, "ALTER TABLE data.style_items ADD COLUMN iop_order REAL", NULL, NULL, NULL);
+    new_version = 2;
+  }
   else
     new_version = version; // should be the fallback so that calling code sees that we are in an infinite loop
 
@@ -1054,6 +1206,12 @@ static int _upgrade_data_schema_step(dt_database_t *db, int version)
 
   return new_version;
 }
+
+#undef FINALIZE
+
+#undef TRY_EXEC
+#undef TRY_STEP
+#undef TRY_PREPARE
 
 /* upgrade library db from 'version' to CURRENT_DATABASE_VERSION_LIBRARY. don't touch this function but
  * _upgrade_library_schema_step() instead. */
@@ -1120,7 +1278,7 @@ static void _create_library_schema(dt_database_t *db)
       "caption VARCHAR, description VARCHAR, license VARCHAR, sha1sum CHAR(40), "
       "orientation INTEGER, histogram BLOB, lightmap BLOB, longitude REAL, "
       "latitude REAL, altitude REAL, color_matrix BLOB, colorspace INTEGER, version INTEGER, "
-      "max_version INTEGER, write_timestamp INTEGER, history_end INTEGER, position INTEGER, aspect_ratio REAL)",
+      "max_version INTEGER, write_timestamp INTEGER, history_end INTEGER, position INTEGER, aspect_ratio REAL, iop_order_version INTEGER)",
       NULL, NULL, NULL);
   sqlite3_exec(db->handle, "CREATE INDEX main.images_group_id_index ON images (group_id)", NULL, NULL, NULL);
   sqlite3_exec(db->handle, "CREATE INDEX main.images_film_id_index ON images (film_id)", NULL, NULL, NULL);
@@ -1134,14 +1292,20 @@ static void _create_library_schema(dt_database_t *db)
       db->handle,
       "CREATE TABLE main.history (imgid INTEGER, num INTEGER, module INTEGER, "
       "operation VARCHAR(256), op_params BLOB, enabled INTEGER, "
-      "blendop_params BLOB, blendop_version INTEGER, multi_priority INTEGER, multi_name VARCHAR(256))",
+      "blendop_params BLOB, blendop_version INTEGER, multi_priority INTEGER, multi_name VARCHAR(256), iop_order REAL)",
       NULL, NULL, NULL);
   sqlite3_exec(db->handle, "CREATE INDEX main.history_imgid_index ON history (imgid)", NULL, NULL, NULL);
-  ////////////////////////////// mask
+  ////////////////////////////// masks history
   sqlite3_exec(db->handle,
-               "CREATE TABLE main.mask (imgid INTEGER, formid INTEGER, form INTEGER, name VARCHAR(256), "
+               "CREATE TABLE main.masks_history (imgid INTEGER, num INTEGER, formid INTEGER, form INTEGER, name VARCHAR(256), "
                "version INTEGER, points BLOB, points_count INTEGER, source BLOB)",
                NULL, NULL, NULL);
+
+  sqlite3_exec(db->handle,
+      "CREATE INDEX main.masks_history_imgid_index ON masks_history (imgid)",
+      NULL, NULL, NULL);
+
+
   ////////////////////////////// tagged_images
   sqlite3_exec(db->handle, "CREATE TABLE main.tagged_images (imgid INTEGER, tagid INTEGER, "
                            "PRIMARY KEY (imgid, tagid))", NULL, NULL, NULL);
@@ -1182,7 +1346,7 @@ static void _create_data_schema(dt_database_t *db)
       db->handle,
       "CREATE TABLE data.style_items (styleid INTEGER, num INTEGER, module INTEGER, "
       "operation VARCHAR(256), op_params BLOB, enabled INTEGER, "
-      "blendop_params BLOB, blendop_version INTEGER, multi_priority INTEGER, multi_name VARCHAR(256))",
+      "blendop_params BLOB, blendop_version INTEGER, multi_priority INTEGER, multi_name VARCHAR(256), iop_order REAL)",
       NULL, NULL, NULL);
   ////////////////////////////// presets
   sqlite3_exec(db->handle, "CREATE TABLE data.presets (name VARCHAR, description VARCHAR, operation "
@@ -1218,13 +1382,18 @@ static void _create_memory_schema(dt_database_t *db)
       db->handle,
       "CREATE TABLE memory.history (imgid INTEGER, num INTEGER, module INTEGER, "
       "operation VARCHAR(256) UNIQUE ON CONFLICT REPLACE, op_params BLOB, enabled INTEGER, "
-      "blendop_params BLOB, blendop_version INTEGER, multi_priority INTEGER, multi_name VARCHAR(256))",
+      "blendop_params BLOB, blendop_version INTEGER, multi_priority INTEGER, multi_name VARCHAR(256), iop_order REAL)",
       NULL, NULL, NULL);
   sqlite3_exec(
       db->handle,
-      "CREATE TABLE memory.style_items (styleid INTEGER, num INTEGER, module INTEGER, "
+      "CREATE TABLE memory.undo_history (id INTEGER, imgid INTEGER, num INTEGER, module INTEGER, "
       "operation VARCHAR(256), op_params BLOB, enabled INTEGER, "
-      "blendop_params BLOB, blendop_version INTEGER, multi_priority INTEGER, multi_name VARCHAR(256))",
+      "blendop_params BLOB, blendop_version INTEGER, multi_priority INTEGER, multi_name VARCHAR(256), iop_order REAL)",
+      NULL, NULL, NULL);
+  sqlite3_exec(
+      db->handle,
+      "CREATE TABLE memory.undo_masks_history (id INTEGER, imgid INTEGER, num INTEGER, formid INTEGER, form INTEGER, "
+      "name VARCHAR(256), version INTEGER, points BLOB, points_count INTEGER, source BLOB)",
       NULL, NULL, NULL);
 }
 
@@ -1533,6 +1702,34 @@ static gboolean _lock_databases(dt_database_t *db)
   return TRUE;
 }
 
+void ask_for_upgrade(const gchar *dbname)
+{
+  // if there's no gui just leave
+  if(darktable.gui == NULL)
+  {
+    fprintf(stderr, "[init] database `%s' is out-of-date. aborting.\n", dbname);
+    exit(1);
+  }
+
+  // the database has to be upgraded, let's ask user
+
+  char *label_text = g_markup_printf_escaped(_("the database schema has to be upgraded for\n"
+                                               "\n"
+                                               "<span style=\"italic\">%s</span>\n"
+                                               "\n"
+                                               "do you want to proceed or quit now to do a backup\n"),
+                                               dbname);
+
+  gboolean shall_we_update_the_db =
+    dt_gui_show_standalone_yes_no_dialog(_("darktable - schema migration"), label_text,
+                                         _("close darktable"), _("upgrade database"));
+
+  g_free(label_text);
+
+  // if no upgrade, we exit now, nothing we can do more
+  if(!shall_we_update_the_db) exit(1);
+}
+
 dt_database_t *dt_database_init(const char *alternative, const gboolean load_data)
 {
   /*  set the threading mode to Serialized */
@@ -1671,6 +1868,8 @@ start:
       sqlite3_finalize(stmt);
       if(db_version < CURRENT_DATABASE_VERSION_DATA)
       {
+        ask_for_upgrade(dbfilename_data);
+
         // older: upgrade
         if(!_upgrade_data_schema(db, db_version))
         {
@@ -1747,6 +1946,8 @@ start:
     sqlite3_finalize(stmt);
     if(db_version < CURRENT_DATABASE_VERSION_LIBRARY)
     {
+      ask_for_upgrade(dbfilename_library);
+
       // older: upgrade
       if(!_upgrade_library_schema(db, db_version))
       {

@@ -128,6 +128,11 @@ int default_group()
   return IOP_GROUP_TONE;
 }
 
+int default_colorspace(dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, dt_dev_pixelpipe_iop_t *piece)
+{
+  return iop_cs_Lab;
+}
+
 /* get the zone index of pixel lightness from zonemap */
 static inline int _iop_zonesystem_zone_index_from_lightness(float lightness, float *zonemap, int size)
 {
@@ -457,7 +462,6 @@ void init(dt_iop_module_t *module)
   module->params = calloc(1, sizeof(dt_iop_zonesystem_params_t));
   module->default_params = calloc(1, sizeof(dt_iop_zonesystem_params_t));
   module->default_enabled = 0;
-  module->priority = 671; // module order created by iop_dependencies.py, do not edit!
   module->params_size = sizeof(dt_iop_zonesystem_params_t);
   module->gui_data = NULL;
   dt_iop_zonesystem_params_t tmp = (dt_iop_zonesystem_params_t){
@@ -499,7 +503,7 @@ static void size_allocate_callback(GtkWidget *widget, GtkAllocation *allocation,
   if(g->image) cairo_surface_destroy(g->image);
   free(g->image_buffer);
 
-  /* load the dt logo as a brackground */
+  /* load the dt logo as a background */
   g->image = dt_util_get_logo(MIN(allocation->width, allocation->height) * 0.75);
   if(g->image)
   {
@@ -581,7 +585,6 @@ void gui_cleanup(struct dt_iop_module_t *self)
   if(g->image) cairo_surface_destroy(g->image);
   free(g->image_buffer);
   dt_pthread_mutex_destroy(&g->lock);
-  self->request_color_pick = DT_REQUEST_COLORPICK_OFF;
   free(self->gui_data);
   self->gui_data = NULL;
 }
@@ -737,6 +740,7 @@ static gboolean dt_iop_zonesystem_bar_scrolled(GtkWidget *widget, GdkEventScroll
   dt_iop_zonesystem_params_t *p = (dt_iop_zonesystem_params_t *)self->params;
   int cs = CLAMP(p->size, 4, MAX_ZONE_SYSTEM_SIZE);
 
+  if(((event->state & gtk_accelerator_get_default_mod_mask()) == darktable.gui->sidebar_scroll_mask) != dt_conf_get_bool("darkroom/ui/sidebar_scroll_default")) return FALSE;
   int delta_y;
   if(dt_gui_get_scroll_unit_deltas(event, NULL, &delta_y))
   {

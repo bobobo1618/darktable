@@ -128,7 +128,7 @@ static int dt_circle_events_mouse_scrolled(struct dt_iop_module_t *module, float
           circle->border *= 1.0f / 0.97f;
         else
           return 1;
-        dt_masks_write_form(form, darktable.develop);
+        dt_dev_add_masks_history_item(darktable.develop, module, TRUE);
         dt_masks_gui_form_remove(form, gui, index);
         dt_masks_gui_form_create(form, gui, index);
         if(form->type & (DT_MASKS_CLONE|DT_MASKS_NON_CLONE))
@@ -144,7 +144,7 @@ static int dt_circle_events_mouse_scrolled(struct dt_iop_module_t *module, float
           circle->radius *= 1.0f / 0.97f;
         else
           return 1;
-        dt_masks_write_form(form, darktable.develop);
+        dt_dev_add_masks_history_item(darktable.develop, module, TRUE);
         dt_masks_gui_form_remove(form, gui, index);
         dt_masks_gui_form_create(form, gui, index);
         if(form->type & (DT_MASKS_CLONE|DT_MASKS_NON_CLONE))
@@ -161,6 +161,15 @@ static int dt_circle_events_mouse_scrolled(struct dt_iop_module_t *module, float
     return 1;
   }
   return 0;
+}
+
+static float dt_conf_get_sanitize_set(const char *name, float min, float max)
+{
+  float value = dt_conf_get_float(name);
+  value = MIN(max, value);
+  value = MAX(min, value);
+  dt_conf_set_float(name, value);
+  return value;
 }
 
 static int dt_circle_events_button_pressed(struct dt_iop_module_t *module, float pzx, float pzy,
@@ -223,10 +232,8 @@ static int dt_circle_events_button_pressed(struct dt_iop_module_t *module, float
 
     if(form->type & (DT_MASKS_CLONE|DT_MASKS_NON_CLONE))
     {
-      const float spots_size = MIN(0.5f, dt_conf_get_float("plugins/darkroom/spots/circle_size"));
-      const float spots_border = MIN(0.5f, dt_conf_get_float("plugins/darkroom/spots/circle_border"));
-      circle->radius = MAX(0.001f, spots_size);
-      circle->border = MAX(0.0005f, spots_border);
+      circle->radius = dt_conf_get_sanitize_set("plugins/darkroom/spots/circle_size", 0.001f, 0.5f);
+      circle->border = dt_conf_get_sanitize_set("plugins/darkroom/spots/circle_border", 0.0005f, 0.5f);
 
       // calculate the source position
       if(form->type & DT_MASKS_CLONE)
@@ -241,10 +248,8 @@ static int dt_circle_events_button_pressed(struct dt_iop_module_t *module, float
     }
     else
     {
-      const float circle_size = MIN(0.5f, dt_conf_get_float("plugins/darkroom/masks/circle/size"));
-      const float circle_border = MIN(0.5f, dt_conf_get_float("plugins/darkroom/masks/circle/border"));
-      circle->radius = MAX(0.001f, circle_size);
-      circle->border = MAX(0.0005f, circle_border);
+      circle->radius = dt_conf_get_sanitize_set("plugins/darkroom/masks/circle/size", 0.001f, 0.5f);
+      circle->border = dt_conf_get_sanitize_set("plugins/darkroom/masks/circle/border", 0.0005f, 0.5f);
       // not used for masks
       form->source[0] = form->source[1] = 0.0f;
     }
@@ -341,7 +346,6 @@ static int dt_circle_events_button_released(struct dt_iop_module_t *module, floa
     }
 
     // we remove the shape
-    dt_dev_masks_list_remove(darktable.develop, form->formid, parentid);
     dt_masks_form_remove(module, dt_masks_get_from_id(darktable.develop, parentid), form);
     return 1;
   }
@@ -360,7 +364,7 @@ static int dt_circle_events_button_released(struct dt_iop_module_t *module, floa
     dt_dev_distort_backtransform(darktable.develop, pts, 1);
     circle->center[0] = pts[0] / darktable.develop->preview_pipe->iwidth;
     circle->center[1] = pts[1] / darktable.develop->preview_pipe->iheight;
-    dt_masks_write_form(form, darktable.develop);
+    dt_dev_add_masks_history_item(darktable.develop, module, TRUE);
 
     // we recreate the form points
     dt_masks_gui_form_remove(form, gui, index);
@@ -399,7 +403,7 @@ static int dt_circle_events_button_released(struct dt_iop_module_t *module, floa
       form->source[0] = pts[0] / darktable.develop->preview_pipe->iwidth;
       form->source[1] = pts[1] / darktable.develop->preview_pipe->iheight;
     }
-    dt_masks_write_form(form, darktable.develop);
+    dt_dev_add_masks_history_item(darktable.develop, module, TRUE);
 
     // we recreate the form points
     dt_masks_gui_form_remove(form, gui, index);
@@ -502,20 +506,20 @@ static void dt_circle_events_post_expose(cairo_t *cr, float zoom_scale, dt_masks
       float radius1, radius2;
       if(form->type & (DT_MASKS_CLONE | DT_MASKS_NON_CLONE))
       {
-        radius1 = MIN(0.5f, dt_conf_get_float("plugins/darkroom/spots/circle_size"));
-        radius2 = MIN(0.5f, dt_conf_get_float("plugins/darkroom/spots/circle_border"));
+        radius1 = dt_conf_get_sanitize_set("plugins/darkroom/spots/circle_size", 0.001f, 0.5f);
+        radius2 = dt_conf_get_sanitize_set("plugins/darkroom/spots/circle_border", 0.0005f, 0.5f);
       }
       else
       {
-        radius1 = MIN(0.5f, dt_conf_get_float("plugins/darkroom/masks/circle/size"));
-        radius2 = MIN(0.5f, dt_conf_get_float("plugins/darkroom/masks/circle/border"));
+        radius1 = dt_conf_get_sanitize_set("plugins/darkroom/masks/circle/size", 0.001f, 0.5f);
+        radius2 = dt_conf_get_sanitize_set("plugins/darkroom/masks/circle/border", 0.0005f, 0.5f);
       }
       radius2 += radius1;
       radius1 *= MIN(wd, ht);
       radius2 *= MIN(wd, ht);
 
       float xpos, ypos;
-      if(gui->posx == -1.f && gui->posy == -1.f)
+      if((gui->posx == -1.f && gui->posy == -1.f) || gui->mouse_leaved_center)
       {
         const float zoom_x = dt_control_get_dev_zoom_x();
         const float zoom_y = dt_control_get_dev_zoom_y();
@@ -762,7 +766,7 @@ static int dt_circle_get_source_area(dt_iop_module_t *module, dt_dev_pixelpipe_i
   }
 
   // and we transform them with all distorted modules
-  if(!dt_dev_distort_transform_plus(darktable.develop, piece->pipe, 0, module->priority, points, l + 1))
+  if(!dt_dev_distort_transform_plus(darktable.develop, piece->pipe, module->iop_order, DT_DEV_TRANSFORM_DIR_BACK_INCL, points, l + 1))
   {
     free(points);
     return 0;
@@ -811,7 +815,7 @@ static int dt_circle_get_area(dt_iop_module_t *module, dt_dev_pixelpipe_iop_t *p
   }
 
   // and we transform them with all distorted modules
-  if(!dt_dev_distort_transform_plus(module->dev, piece->pipe, 0, module->priority, points, l + 1))
+  if(!dt_dev_distort_transform_plus(module->dev, piece->pipe, module->iop_order, DT_DEV_TRANSFORM_DIR_BACK_INCL, points, l + 1))
   {
     free(points);
     return 0;
@@ -868,7 +872,7 @@ static int dt_circle_get_mask(dt_iop_module_t *module, dt_dev_pixelpipe_iop_t *p
   start2 = dt_get_wtime();
 
   // we back transform all this points
-  if(!dt_dev_distort_backtransform_plus(module->dev, piece->pipe, 0, module->priority, points, w * h))
+  if(!dt_dev_distort_backtransform_plus(module->dev, piece->pipe, module->iop_order, DT_DEV_TRANSFORM_DIR_BACK_INCL, points, w * h))
   {
     free(points);
     return 0;
@@ -955,7 +959,7 @@ static int dt_circle_get_mask_roi(dt_iop_module_t *module, dt_dev_pixelpipe_iop_
   start2 = dt_get_wtime();
 
   // we back transform all these points
-  if(!dt_dev_distort_backtransform_plus(module->dev, piece->pipe, 0, module->priority, points,
+  if(!dt_dev_distort_backtransform_plus(module->dev, piece->pipe, module->iop_order, DT_DEV_TRANSFORM_DIR_BACK_INCL, points, 
                                         (size_t)mw * mh))
   {
     free(points);

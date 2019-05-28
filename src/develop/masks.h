@@ -197,6 +197,8 @@ typedef struct dt_masks_form_gui_t
 
   // values for mouse positions, etc...
   float posx, posy, dx, dy, scrollx, scrolly, posx_source, posy_source;
+  // TRUE if mouse has leaved the center window
+  gboolean mouse_leaved_center;
   gboolean form_selected;
   gboolean border_selected;
   gboolean source_selected;
@@ -275,18 +277,19 @@ int dt_masks_legacy_params(dt_develop_t *dev, void *params, const int old_versio
 
 /** we create a completely new form. */
 dt_masks_form_t *dt_masks_create(dt_masks_type_t type);
+/** we create a completely new form and add it to darktable.develop->allforms. */
+dt_masks_form_t *dt_masks_create_ext(dt_masks_type_t type);
+/** replace dev->forms with forms */
+void dt_masks_replace_current_forms(dt_develop_t *dev, GList *forms);
 /** returns a form with formid == id from a list of forms */
 dt_masks_form_t *dt_masks_get_from_id_ext(GList *forms, int id);
 /** returns a form with formid == id from dev->forms */
 dt_masks_form_t *dt_masks_get_from_id(dt_develop_t *dev, int id);
 
 /** read the forms from the db */
-void dt_masks_read_forms_ext(dt_develop_t *dev, const int imgid, gboolean no_image);
-void dt_masks_read_forms(dt_develop_t *dev);
+void dt_masks_read_masks_history(dt_develop_t *dev, const int imgid);
 /** write the forms into the db */
-void dt_masks_write_forms_ext(dt_develop_t *dev, const int imgid, gboolean undo);
-void dt_masks_write_form(dt_masks_form_t *form, dt_develop_t *dev);
-void dt_masks_write_forms(dt_develop_t *dev);
+void dt_masks_write_masks_history_item(const int imgid, const int num, dt_masks_form_t *form);
 void dt_masks_free_form(dt_masks_form_t *form);
 void dt_masks_update_image(dt_develop_t *dev);
 void dt_masks_cleanup_unused(dt_develop_t *dev);
@@ -307,6 +310,7 @@ int dt_masks_events_mouse_scrolled(struct dt_iop_module_t *module, double x, dou
 void dt_masks_events_post_expose(struct dt_iop_module_t *module, cairo_t *cr, int32_t width, int32_t height,
                                  int32_t pointerx, int32_t pointery);
 int dt_masks_events_mouse_leave(struct dt_iop_module_t *module);
+int dt_masks_events_mouse_enter(struct dt_iop_module_t *module);
 
 /** functions used to manipulate gui datas */
 void dt_masks_gui_form_create(dt_masks_form_t *form, dt_masks_form_gui_t *gui, int index);
@@ -332,6 +336,8 @@ void dt_masks_form_remove(struct dt_iop_module_t *module, dt_masks_form_t *grp, 
 void dt_masks_form_change_opacity(dt_masks_form_t *form, int parentid, int up);
 void dt_masks_form_move(dt_masks_form_t *grp, int formid, int up);
 int dt_masks_form_duplicate(dt_develop_t *dev, int formid);
+/* returns a duplicate tof form, including the formid */
+dt_masks_form_t *dt_masks_dup_masks_form(const dt_masks_form_t *form);
 /* duplicate the list of forms, replace item in the list with form with the same formid */
 GList *dt_masks_dup_forms_deep(GList *forms, dt_masks_form_t *form);
 

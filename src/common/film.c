@@ -323,10 +323,6 @@ static gboolean ask_and_delete(gpointer user_data)
 
   GtkWidget *scroll = gtk_scrolled_window_new(NULL, NULL);
   gtk_widget_set_vexpand(scroll, TRUE);
-  gtk_widget_set_margin_start(scroll, DT_PIXEL_APPLY_DPI(10));
-  gtk_widget_set_margin_end(scroll, DT_PIXEL_APPLY_DPI(10));
-  gtk_widget_set_margin_top(scroll, DT_PIXEL_APPLY_DPI(0));
-  gtk_widget_set_margin_bottom(scroll, DT_PIXEL_APPLY_DPI(0));
 
   GtkListStore *store = gtk_list_store_new(1, G_TYPE_STRING);
 
@@ -449,6 +445,12 @@ void dt_film_remove(const int id)
   sqlite3_step(stmt);
   sqlite3_finalize(stmt);
   DT_DEBUG_SQLITE3_PREPARE_V2(dt_database_get(darktable.db), "DELETE FROM main.history WHERE imgid IN "
+                                                             "(SELECT id FROM main.images WHERE film_id = ?1)",
+                              -1, &stmt, NULL);
+  DT_DEBUG_SQLITE3_BIND_INT(stmt, 1, id);
+  sqlite3_step(stmt);
+  sqlite3_finalize(stmt);
+  DT_DEBUG_SQLITE3_PREPARE_V2(dt_database_get(darktable.db), "DELETE FROM main.masks_history WHERE imgid IN "
                                                              "(SELECT id FROM main.images WHERE film_id = ?1)",
                               -1, &stmt, NULL);
   DT_DEBUG_SQLITE3_BIND_INT(stmt, 1, id);

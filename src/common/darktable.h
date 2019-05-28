@@ -201,6 +201,8 @@ typedef struct darktable_t
 
   int32_t unmuted;
   GList *iop;
+  GList *iop_order_list;
+  GList *iop_order_rules;
   GList *capabilities;
   JsonParser *noiseprofile_parser;
   struct dt_conf_t *conf;
@@ -239,6 +241,7 @@ typedef struct darktable_t
   dt_lua_state_t lua_state;
   GList *guides;
   double start_wtime;
+  GList *themes;
 } darktable_t;
 
 typedef struct
@@ -257,8 +260,10 @@ void dt_gettime(char *datetime, size_t datetime_len);
 void *dt_alloc_align(size_t alignment, size_t size);
 #ifdef _WIN32
 void dt_free_align(void *mem);
+#define dt_free_align_ptr dt_free_align
 #else
 #define dt_free_align(A) free(A)
+#define dt_free_align_ptr free
 #endif
 
 static inline gboolean dt_is_aligned(const void *pointer, size_t byte_count)
@@ -287,7 +292,9 @@ static inline void dt_get_times(dt_times_t *t)
   t->user = ru.ru_utime.tv_sec + ru.ru_utime.tv_usec * (1.0 / 1000000.0);
 }
 
-void dt_show_times(const dt_times_t *start, const char *prefix, const char *suffix, ...) __attribute__((format(printf, 3, 4)));
+void dt_show_times(const dt_times_t *start, const char *prefix);
+
+void dt_show_times_f(const dt_times_t *start, const char *prefix, const char *suffix, ...) __attribute__((format(printf, 3, 4)));
 
 /** \brief check if file is a supported image */
 gboolean dt_supported_image(const gchar *filename);
@@ -329,9 +336,12 @@ static inline float dt_fast_expf(const float x)
   // const int k = CLAMPS(i1 + x * (i2 - i1), 0x0u, 0x7fffffffu);
   // without max clamping (doesn't work for large x, but is faster):
   const int k0 = i1 + x * (i2 - i1);
-  const int k = k0 > 0 ? k0 : 0;
-  const float f = *(const float *)&k;
-  return f;
+  union {
+      float f;
+      int k;
+  } u;
+  u.k = k0 > 0 ? k0 : 0;
+  return u.f;
 }
 
 static inline void dt_print_mem_usage()

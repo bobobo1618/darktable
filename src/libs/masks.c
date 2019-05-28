@@ -226,10 +226,9 @@ static void _tree_add_exist(GtkButton *button, dt_masks_form_t *grp)
   if(form && dt_masks_group_add_form(grp, form))
   {
     // we save the group
-    dt_masks_write_form(grp, darktable.develop);
+    dt_dev_add_masks_history_item(darktable.develop, NULL, FALSE);
 
     // and we apply the change
-    dt_dev_masks_list_change(darktable.develop);
     dt_masks_update_image(darktable.develop);
     dt_dev_masks_selection_change(darktable.develop, grp->formid, TRUE);
   }
@@ -279,7 +278,7 @@ static void _tree_group(GtkButton *button, dt_lib_module_t *self)
   darktable.develop->forms = g_list_append(darktable.develop->forms, grp);
 
   // add we save
-  dt_masks_write_forms(darktable.develop);
+  dt_dev_add_masks_history_item(darktable.develop, NULL, FALSE);
   _lib_masks_recreate_list(self);
   // dt_masks_change_form_gui(grp);
 }
@@ -376,7 +375,7 @@ static void _tree_inverse(GtkButton *button, dt_lib_module_t *self)
 
   if(change)
   {
-    dt_masks_write_forms(darktable.develop);
+    dt_dev_add_masks_history_item(darktable.develop, NULL, FALSE);
     dt_masks_update_image(darktable.develop);
     dt_control_queue_redraw_center();
   }
@@ -443,7 +442,7 @@ static void _tree_intersection(GtkButton *button, dt_lib_module_t *self)
 
   if(change)
   {
-    dt_masks_write_forms(darktable.develop);
+    dt_dev_add_masks_history_item(darktable.develop, NULL, FALSE);
     dt_masks_update_image(darktable.develop);
     dt_control_queue_redraw_center();
   }
@@ -510,7 +509,7 @@ static void _tree_difference(GtkButton *button, dt_lib_module_t *self)
 
   if(change)
   {
-    dt_masks_write_forms(darktable.develop);
+    dt_dev_add_masks_history_item(darktable.develop, NULL, FALSE);
     dt_masks_update_image(darktable.develop);
     dt_control_queue_redraw_center();
   }
@@ -577,7 +576,7 @@ static void _tree_exclusion(GtkButton *button, dt_lib_module_t *self)
 
   if(change)
   {
-    dt_masks_write_forms(darktable.develop);
+    dt_dev_add_masks_history_item(darktable.develop, NULL, FALSE);
     dt_masks_update_image(darktable.develop);
     dt_control_queue_redraw_center();
   }
@@ -644,7 +643,7 @@ static void _tree_union(GtkButton *button, dt_lib_module_t *self)
 
   if(change)
   {
-    dt_masks_write_forms(darktable.develop);
+    dt_dev_add_masks_history_item(darktable.develop, NULL, FALSE);
     dt_masks_update_image(darktable.develop);
     dt_control_queue_redraw_center();
   }
@@ -798,7 +797,6 @@ static void _tree_duplicate_shape(GtkButton *button, dt_lib_module_t *self)
 
     int nid = dt_masks_form_duplicate(darktable.develop, id);
     if(nid <= 0) return;
-    dt_dev_masks_list_change(darktable.develop);
     dt_dev_masks_selection_change(darktable.develop, nid, TRUE);
     //_lib_masks_recreate_list(self);
   }
@@ -833,7 +831,7 @@ static void _tree_cell_edited(GtkCellRendererText *cell, gchar *path_string, gch
   // first, we need to update the mask name
 
   g_strlcpy(form->name, text, sizeof(form->name));
-  dt_masks_write_form(form, darktable.develop);
+  dt_dev_add_masks_history_item(darktable.develop, NULL, FALSE);
 
   // and we update the cell text
   _set_iter_name(lm, form, 0, 1.0f, model, &iter);
@@ -1370,8 +1368,11 @@ static void _lib_masks_recreate_list(dt_lib_module_t *self)
 {
   /* first destroy all buttons in list */
   dt_lib_masks_t *lm = (dt_lib_masks_t *)self->data;
+  if(!lm) return;
   if(lm->gui_reset) return;
 
+  const int gui_reset = lm->gui_reset;
+  lm->gui_reset = 1;
   // if (lm->treeview) gtk_widget_destroy(lm->treeview);
 
   _lib_masks_inactivate_icons(self);
@@ -1402,6 +1403,8 @@ static void _lib_masks_recreate_list(dt_lib_module_t *self)
 
   gtk_tree_view_set_model(GTK_TREE_VIEW(lm->treeview), GTK_TREE_MODEL(treestore));
   g_object_unref(treestore);
+  
+  lm->gui_reset = gui_reset;
 }
 
 static gboolean _update_foreach(GtkTreeModel *model, GtkTreePath *path, GtkTreeIter *iter, gpointer data)
@@ -1557,7 +1560,6 @@ static void _lib_masks_selection_change(dt_lib_module_t *self, int selectid, int
 
 void gui_init(dt_lib_module_t *self)
 {
-  const int bs = DT_PIXEL_APPLY_DPI(14);
   const int bs2 = DT_PIXEL_APPLY_DPI(13);
 
   /* initialize ui widgets */
@@ -1628,7 +1630,7 @@ void gui_init(dt_lib_module_t *self)
                                         cairo_image_surface_get_stride(used_cst), NULL, NULL);
 
   // initialise widgets
-  self->widget = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+  self->widget = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
   dt_gui_add_help_link(self->widget, dt_get_help_url(self->plugin_name));
   GtkWidget *hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
 
@@ -1640,22 +1642,19 @@ void gui_init(dt_lib_module_t *self)
   g_signal_connect(G_OBJECT(d->bt_gradient), "button-press-event", G_CALLBACK(_bt_add_gradient), self);
   gtk_widget_set_tooltip_text(d->bt_gradient, _("add gradient"));
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(d->bt_gradient), FALSE);
-  gtk_widget_set_size_request(GTK_WIDGET(d->bt_gradient), bs, bs);
   gtk_box_pack_end(GTK_BOX(hbox), d->bt_gradient, FALSE, FALSE, 0);
 
   d->bt_path = dtgtk_togglebutton_new(dtgtk_cairo_paint_masks_path, CPF_STYLE_FLAT | CPF_DO_NOT_USE_BORDER, NULL);
   g_signal_connect(G_OBJECT(d->bt_path), "button-press-event", G_CALLBACK(_bt_add_path), self);
   gtk_widget_set_tooltip_text(d->bt_path, _("add path"));
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(d->bt_path), FALSE);
-  gtk_widget_set_size_request(GTK_WIDGET(d->bt_path), bs, bs);
-  gtk_box_pack_end(GTK_BOX(hbox), d->bt_path, FALSE, FALSE, bs);
+  gtk_box_pack_end(GTK_BOX(hbox), d->bt_path, FALSE, FALSE, 0);
 
   d->bt_ellipse
       = dtgtk_togglebutton_new(dtgtk_cairo_paint_masks_ellipse, CPF_STYLE_FLAT | CPF_DO_NOT_USE_BORDER, NULL);
   g_signal_connect(G_OBJECT(d->bt_ellipse), "button-press-event", G_CALLBACK(_bt_add_ellipse), self);
   gtk_widget_set_tooltip_text(d->bt_ellipse, _("add ellipse"));
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(d->bt_ellipse), FALSE);
-  gtk_widget_set_size_request(GTK_WIDGET(d->bt_ellipse), bs, bs);
   gtk_box_pack_end(GTK_BOX(hbox), d->bt_ellipse, FALSE, FALSE, 0);
 
   d->bt_circle
@@ -1663,14 +1662,12 @@ void gui_init(dt_lib_module_t *self)
   g_signal_connect(G_OBJECT(d->bt_circle), "button-press-event", G_CALLBACK(_bt_add_circle), self);
   gtk_widget_set_tooltip_text(d->bt_circle, _("add circle"));
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(d->bt_circle), FALSE);
-  gtk_widget_set_size_request(GTK_WIDGET(d->bt_circle), bs, bs);
-  gtk_box_pack_end(GTK_BOX(hbox), d->bt_circle, FALSE, FALSE, bs);
+  gtk_box_pack_end(GTK_BOX(hbox), d->bt_circle, FALSE, FALSE, 0);
 
   d->bt_brush = dtgtk_togglebutton_new(dtgtk_cairo_paint_masks_brush, CPF_STYLE_FLAT | CPF_DO_NOT_USE_BORDER, NULL);
   g_signal_connect(G_OBJECT(d->bt_brush), "button-press-event", G_CALLBACK(_bt_add_brush), self);
   gtk_widget_set_tooltip_text(d->bt_brush, _("add brush"));
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(d->bt_brush), FALSE);
-  gtk_widget_set_size_request(GTK_WIDGET(d->bt_brush), bs, bs);
   gtk_box_pack_end(GTK_BOX(hbox), d->bt_brush, FALSE, FALSE, 0);
 
   gtk_box_pack_start(GTK_BOX(self->widget), hbox, TRUE, TRUE, 0);

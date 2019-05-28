@@ -169,7 +169,12 @@ int default_group()
 
 int flags()
 {
-  return IOP_FLAGS_ALLOW_TILING | IOP_FLAGS_ONE_INSTANCE;
+  return IOP_FLAGS_ALLOW_TILING | IOP_FLAGS_ONE_INSTANCE | IOP_FLAGS_FENCE;
+}
+
+int default_colorspace(dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, dt_dev_pixelpipe_iop_t *piece)
+{
+  return iop_cs_RAW;
 }
 
 void init_key_accels(dt_iop_module_so_t *self)
@@ -198,6 +203,18 @@ int legacy_params(dt_iop_module_t *self, const void *const old_params, const int
     return 0;
   }
   return 1;
+}
+
+int input_colorspace(dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe,
+                     dt_dev_pixelpipe_iop_t *piece)
+{
+  return iop_cs_RAW;
+}
+
+int output_colorspace(dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe,
+                      dt_dev_pixelpipe_iop_t *piece)
+{
+  return iop_cs_rgb;
 }
 
 #ifdef HAVE_OPENCL
@@ -512,8 +529,7 @@ static void green_equilibration_favg(float *out, const float *const in, const in
 #define TS 122
 
 /** Lookup for allhex[], making sure that row/col aren't negative **/
-static inline const short *const hexmap(const int row, const int col,
-                                        short (*const allhex)[3][8])
+static inline const short * hexmap(const int row, const int col, short (*const allhex)[3][8])
 {
   // Row and column offsets may be negative, but C's modulo function
   // is not useful here with a negative dividend. To be safe, add a
@@ -548,7 +564,7 @@ static void xtrans_markesteijn_interpolate(float *out, const float *const in,
   const int ndir = 4 << (passes > 1);
 
   const size_t buffer_size = (size_t)TS * TS * (ndir * 4 + 3) * sizeof(float);
-  char *const all_buffers = (char *)dt_alloc_align(16, dt_get_num_threads() * buffer_size);
+  char *const all_buffers = (char *)dt_alloc_align(64, dt_get_num_threads() * buffer_size);
   if(!all_buffers)
   {
     printf("[demosaic] not able to allocate Markesteijn buffers\n");
@@ -598,7 +614,7 @@ static void xtrans_markesteijn_interpolate(float *out, const float *const in,
     // note that channels come before tiles to allow for a
     // vectorization optimization when building drv[] from yuv[]
     float (*const yuv)[TS][TS] = (float(*)[TS][TS])(buffer + TS * TS * (ndir * 3) * sizeof(float));
-    // drv points to ndir TSxTS tiles, each a single chanel of derivatives
+    // drv points to ndir TSxTS tiles, each a single channel of derivatives
     float (*const drv)[TS][TS] = (float(*)[TS][TS])(buffer + TS * TS * (ndir * 3 + 3) * sizeof(float));
     // gmin and gmax reuse memory which is used later by yuv buffer;
     // each points to a TSxTS tile of single channel data
@@ -958,7 +974,7 @@ static void xtrans_markesteijn_interpolate(float *out, const float *const in,
           }
         }
 
-      /* Average the most homogenous pixels for the final result:       */
+      /* Average the most homogeneous pixels for the final result:       */
       for(int row = pad_tile; row < mrow - pad_tile; row++)
         for(int col = pad_tile; col < mcol - pad_tile; col++)
         {
@@ -1541,7 +1557,7 @@ static void xtrans_fdc_interpolate(struct dt_iop_module_t *self, float *out, con
               1.221201e-03f - 5.982162e-19f * _Complex_I } } };
 
   const size_t buffer_size = (size_t)TS * TS * (ndir * 4 + 7) * sizeof(float);
-  char *const all_buffers = (char *)dt_alloc_align(16, dt_get_num_threads() * buffer_size);
+  char *const all_buffers = (char *)dt_alloc_align(64, dt_get_num_threads() * buffer_size);
   if(!all_buffers)
   {
     fprintf(stderr, "[demosaic] not able to allocate FDC base buffers\n");
@@ -1622,7 +1638,7 @@ static void xtrans_fdc_interpolate(struct dt_iop_module_t *self, float *out, con
     // note that channels come before tiles to allow for a
     // vectorization optimization when building drv[] from yuv[]
     float (*const yuv)[TS][TS] = (float(*)[TS][TS])(buffer + TS * TS * (ndir * 3) * sizeof(float));
-    // drv points to ndir TSxTS tiles, each a single chanel of derivatives
+    // drv points to ndir TSxTS tiles, each a single channel of derivatives
     float (*const drv)[TS][TS] = (float(*)[TS][TS])(buffer + TS * TS * (ndir * 3 + 3) * sizeof(float));
     // gmin and gmax reuse memory which is used later by yuv buffer;
     // each points to a TSxTS tile of single channel data
@@ -2023,7 +2039,7 @@ static void xtrans_fdc_interpolate(struct dt_iop_module_t *self, float *out, con
           for(int c = 0; c < 2; c++) *(fdc_chroma + c * TS * TS + row * TS + col) = uv[c];
         }
 
-      /* Average the most homogenous pixels for the final result:       */
+      /* Average the most homogeneous pixels for the final result:       */
       for(int row = pad_tile; row < mrow - pad_tile; row++)
         for(int col = pad_tile; col < mcol - pad_tile; col++)
         {
@@ -2272,7 +2288,7 @@ static void vng_interpolate(float *out, const float *const in,
   if(only_vng_linear) return;
 
   char *buffer
-      = (char *)dt_alloc_align(16, (size_t)sizeof(**brow) * width * 3 + sizeof(*ip) * prow * pcol * 320);
+      = (char *)dt_alloc_align(64, (size_t)sizeof(**brow) * width * 3 + sizeof(*ip) * prow * pcol * 320);
   if(!buffer)
   {
     fprintf(stderr, "[demosaic] not able to allocate VNG buffer\n");
@@ -2466,7 +2482,7 @@ static void demosaic_ppg(float *const out, const float *const in, const dt_iop_r
   const float *input = in;
   if(median)
   {
-    float *med_in = (float *)dt_alloc_align(16, (size_t)roi_in->height * roi_in->width * sizeof(float));
+    float *med_in = (float *)dt_alloc_align(64, (size_t)roi_in->height * roi_in->width * sizeof(float));
     pre_median(med_in, in, roi_in, filters, 1, thrs);
     input = med_in;
   }
@@ -2738,6 +2754,7 @@ static int demosaic_qual_flags(const dt_dev_pixelpipe_iop_t *const piece,
   switch (piece->pipe->type)
   {
     case DT_DEV_PIXELPIPE_FULL:
+    case DT_DEV_PIXELPIPE_PREVIEW2:
       {
         const int qual = get_quality();
         if (qual > 0) flags |= DEMOSAIC_FULL_SCALE;
@@ -2826,7 +2843,7 @@ void process(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, const 
       roo.width = roi_in->width;
       roo.height = roi_in->height;
       roo.scale = 1.0f;
-      tmp = (float *)dt_alloc_align(16, (size_t)roo.width * roo.height * 4 * sizeof(float));
+      tmp = (float *)dt_alloc_align(64, (size_t)roo.width * roo.height * 4 * sizeof(float));
     }
 
     if(demosaicing_method == DT_IOP_DEMOSAIC_PASSTHROUGH_MONOCHROME)
@@ -2850,7 +2867,7 @@ void process(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, const 
 
       if(!(img->flags & DT_IMAGE_4BAYER) && data->green_eq != DT_IOP_GREEN_EQ_NO)
       {
-        in = (float *)dt_alloc_align(16, (size_t)roi_in->height * roi_in->width * sizeof(float));
+        in = (float *)dt_alloc_align(64, (size_t)roi_in->height * roi_in->width * sizeof(float));
         switch(data->green_eq)
         {
           case DT_IOP_GREEN_EQ_FULL:
@@ -2862,7 +2879,7 @@ void process(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, const 
                                      roi_in->x, roi_in->y, threshold);
             break;
           case DT_IOP_GREEN_EQ_BOTH:
-            aux = dt_alloc_align(16, (size_t)roi_in->height * roi_in->width * sizeof(float));
+            aux = dt_alloc_align(64, (size_t)roi_in->height * roi_in->width * sizeof(float));
             green_equilibration_favg(aux, pixels, roi_in->width, roi_in->height, piece->pipe->dsc.filters,
                                      roi_in->x, roi_in->y);
             green_equilibration_lavg(in, aux, roi_in->width, roi_in->height, piece->pipe->dsc.filters, roi_in->x,
@@ -3084,7 +3101,7 @@ static int green_equilibration_cl(struct dt_iop_module_t *self, dt_dev_pixelpipe
                                                  slocal);
     if(err != CL_SUCCESS) goto error;
 
-    sumsum = dt_alloc_align(16, (size_t)reducesize * 2 * sizeof(float));
+    sumsum = dt_alloc_align(64, (size_t)reducesize * 2 * sizeof(float));
     if(sumsum == NULL) goto error;
     err = dt_opencl_read_buffer_from_device(devid, (void *)sumsum, dev_r, 0,
                                             (size_t)reducesize * 2 * sizeof(float), CL_TRUE);
@@ -4422,7 +4439,7 @@ static int process_markesteijn_cl(struct dt_iop_module_t *self, dt_dev_pixelpipe
     dt_opencl_release_mem_object(dev_tmptmp);
     dev_tmptmp = NULL;
 
-    // take care of image borders. the algorihm above leaves an unprocessed border of pad_tile pixels.
+    // take care of image borders. the algorithm above leaves an unprocessed border of pad_tile pixels.
     // strategy: take the four edges and process them each with process_vng_cl(). as VNG produces
     // an image with a border with only linear interpolation we process edges of pad_tile+3px and
     // drop 3px on the inner side if possible
@@ -4679,7 +4696,6 @@ void init(dt_iop_module_t *module)
   module->params = calloc(1, sizeof(dt_iop_demosaic_params_t));
   module->default_params = calloc(1, sizeof(dt_iop_demosaic_params_t));
   module->default_enabled = 1;
-  module->priority = 114; // module order created by iop_dependencies.py, do not edit!
   module->hide_enable_button = 1;
   module->params_size = sizeof(dt_iop_demosaic_params_t);
   module->gui_data = NULL;

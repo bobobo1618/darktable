@@ -47,12 +47,12 @@ void dt_iop_flip_and_zoom_8(const uint8_t *in, int32_t iw, int32_t ih, uint8_t *
   const int bpp = 4; // bytes per pixel
   int32_t ii = 0, jj = 0;
   int32_t si = 1, sj = iw;
-  if(orientation & ORIENTATION_FLIP_X)
+  if(orientation & ORIENTATION_FLIP_Y)
   {
     jj = ih - jj - 1;
     sj = -sj;
   }
-  if(orientation & ORIENTATION_FLIP_Y)
+  if(orientation & ORIENTATION_FLIP_X)
   {
     ii = iw - ii - 1;
     si = -si;
@@ -430,7 +430,7 @@ void dt_iop_clip_and_zoom_mosaic_half_size_sse2(uint16_t *const out, const uint1
       num = 1.0f / num;
       col = _mm_mul_ps(col, _mm_set1_ps(num));
 
-      float fcol[4] __attribute__((aligned(16)));
+      float fcol[4] __attribute__((aligned(64)));
       _mm_store_ps(fcol, col);
 
       const int c = (2 * ((y + rggby) % 2) + ((x + rggbx) % 2));
@@ -826,7 +826,7 @@ void dt_iop_clip_and_zoom_mosaic_half_size_f_sse2(float *const out, const float 
       num = 1.0f / num;
       col = _mm_mul_ps(col, _mm_set1_ps(num));
 
-      float fcol[4] __attribute__((aligned(16)));
+      float fcol[4] __attribute__((aligned(64)));
       _mm_store_ps(fcol, col);
 
       const int c = (2 * ((y + rggby) % 2) + ((x + rggbx) % 2));

@@ -37,6 +37,7 @@
 #include "gui/draw.h"
 #include "gui/gtk.h"
 #include "gui/presets.h"
+#include "gui/color_picker_proxy.h"
 #include "iop/iop_api.h"
 #include "libs/colorpicker.h"
 
@@ -122,6 +123,7 @@ typedef struct dt_iop_tonecurve_gui_data_t
   GtkWidget *autoscale_ab;
   GtkNotebook *channel_tabs;
   GtkWidget *colorpicker;
+  dt_iop_color_picker_t color_picker;
   GtkWidget *interpolator;
   GtkWidget *scale;
   tonecurve_channel_t channel;
@@ -149,6 +151,10 @@ typedef struct dt_iop_tonecurve_data_t
 
 typedef struct dt_iop_tonecurve_global_data_t
 {
+  float picked_color[3];
+  float picked_color_min[3];
+  float picked_color_max[3];
+  float picked_output_color[3];
   int kernel_tonecurve;
 } dt_iop_tonecurve_global_data_t;
 
@@ -166,6 +172,11 @@ int default_group()
 int flags()
 {
   return IOP_FLAGS_SUPPORTS_BLENDING | IOP_FLAGS_ALLOW_TILING;
+}
+
+int default_colorspace(dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, dt_dev_pixelpipe_iop_t *piece)
+{
+  return iop_cs_Lab;
 }
 
 int legacy_params(dt_iop_module_t *self, const void *const old_params, const int old_version,
@@ -692,8 +703,6 @@ void gui_reset(struct dt_iop_module_t *self)
   dt_iop_tonecurve_gui_data_t *g = (dt_iop_tonecurve_gui_data_t *)self->gui_data;
   dt_iop_tonecurve_params_t *p = (dt_iop_tonecurve_params_t *)self->params;
   dt_bauhaus_combobox_set(g->interpolator, p->tonecurve_type[ch_L]);
-  self->request_color_pick = DT_REQUEST_COLORPICK_OFF;
-  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(g->colorpicker), 0);
 
   dt_bauhaus_combobox_set(g->scale, 0); // linear
   g->loglogscale = 0;
@@ -753,11 +762,7 @@ void gui_update(struct dt_iop_module_t *self)
 
   // that's all, gui curve is read directly from params during expose event.
   gtk_widget_queue_draw(self->widget);
-
-  if (self->request_color_pick == DT_REQUEST_COLORPICK_OFF)
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(g->colorpicker), 0);
 }
-
 
 void init(dt_iop_module_t *module)
 {
@@ -765,7 +770,6 @@ void init(dt_iop_module_t *module)
   module->default_params = calloc(1, sizeof(dt_iop_tonecurve_params_t));
   module->default_enabled = 0;
   module->request_histogram |= (DT_REQUEST_ON);
-  module->priority = 685; // module order created by iop_dependencies.py, do not edit!
   module->params_size = sizeof(dt_iop_tonecurve_params_t);
   module->gui_data = NULL;
   dt_iop_tonecurve_params_t tmp = (dt_iop_tonecurve_params_t){
@@ -794,6 +798,13 @@ void init_global(dt_iop_module_so_t *module)
       = (dt_iop_tonecurve_global_data_t *)malloc(sizeof(dt_iop_tonecurve_global_data_t));
   module->data = gd;
   gd->kernel_tonecurve = dt_opencl_create_kernel(program, "tonecurve");
+  for(int k=0; k<3; k++)
+  {
+    gd->picked_color[k] = .0f;
+    gd->picked_color_min[k] = .0f;
+    gd->picked_color_max[k] = .0f;
+    gd->picked_output_color[k] = .0f;
+  }
 }
 
 void cleanup_global(dt_iop_module_so_t *module)
@@ -852,7 +863,6 @@ static void scale_callback(GtkWidget *widget, dt_iop_module_t *self)
   gtk_widget_queue_draw(GTK_WIDGET(g->area));
 }
 
-
 static void logbase_callback(GtkWidget *slider, dt_iop_module_t *self)
 {
   if(self->dt->gui->reset) return;
@@ -864,7 +874,6 @@ static void logbase_callback(GtkWidget *slider, dt_iop_module_t *self)
     gtk_widget_queue_draw(GTK_WIDGET(g->area));
   }
 }
-
 
 static void autoscale_ab_callback(GtkWidget *widget, dt_iop_module_t *self)
 {
@@ -922,6 +931,19 @@ static void tab_switch(GtkNotebook *notebook, GtkWidget *page, guint page_num, g
   dt_iop_tonecurve_gui_data_t *c = (dt_iop_tonecurve_gui_data_t *)self->gui_data;
   if(self->dt->gui->reset) return;
   c->channel = (tonecurve_channel_t)page_num;
+  if (c->channel == ch_L)
+  {
+    gtk_widget_set_visible(c->scale, TRUE);
+    if (c->loglogscale == 0 && c->semilog == 0)
+      gtk_widget_set_visible(c->logbase, FALSE);
+    else
+      gtk_widget_set_visible(c->logbase, TRUE);
+  }
+  else
+  {
+    gtk_widget_set_visible(c->scale, FALSE);
+    gtk_widget_set_visible(c->logbase, FALSE);
+  }
   gtk_widget_queue_draw(self->widget);
 }
 
@@ -988,24 +1010,43 @@ static float to_lin(const float x, const float base, const int ch, const int sem
   }
 }
 
-static void pick_toggled(GtkToggleButton *togglebutton, dt_iop_module_t *self)
+static void _iop_color_picker_apply(dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece)
 {
-  if(darktable.gui->reset) return;
+  dt_iop_tonecurve_global_data_t *gd = (dt_iop_tonecurve_global_data_t *)self->data;
 
-  self->request_color_pick
-      = (gtk_toggle_button_get_active(togglebutton) ? DT_REQUEST_COLORPICK_MODULE : DT_REQUEST_COLORPICK_OFF);
-
-  /* set the area sample size */
-  if(self->request_color_pick != DT_REQUEST_COLORPICK_OFF)
+  for(int k=0; k<3; k++)
   {
-    dt_lib_colorpicker_set_point(darktable.lib, 0.5, 0.5);
-    dt_dev_reprocess_all(self->dev);
+    gd->picked_color[k] = self->picked_color[k];
+    gd->picked_color_min[k] = self->picked_color_min[k];
+    gd->picked_color_max[k] = self->picked_color_max[k];
+    gd->picked_output_color[k] = self->picked_output_color[k];
   }
-  else
-    dt_control_queue_redraw();
+  dt_control_queue_redraw_widget(self->widget);
+}
 
-  if(self->off) gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(self->off), 1);
-  dt_iop_request_focus(self);
+static int _iop_color_picker_get_set(dt_iop_module_t *self, GtkWidget *button)
+{
+  dt_iop_color_picker_t *picker = self->picker;
+  const int current_picker = picker->current_picker;
+
+  picker->current_picker = 1;
+
+  if(current_picker == picker->current_picker)
+    return DT_COLOR_PICKER_ALREADY_SELECTED;
+  else
+    return picker->current_picker;
+}
+
+static void _iop_color_picker_update(dt_iop_module_t *self)
+{
+  dt_iop_tonecurve_gui_data_t *g = (dt_iop_tonecurve_gui_data_t *)self->gui_data;
+  const int old_reset = darktable.gui->reset;
+  darktable.gui->reset = 1;
+
+  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(g->colorpicker), g->color_picker.current_picker == 1);
+
+  darktable.gui->reset = old_reset;
+  dt_control_queue_redraw_widget(self->widget);
 }
 
 static void dt_iop_tonecurve_sanity_check(dt_iop_module_t *self, GtkWidget *widget)
@@ -1087,6 +1128,7 @@ static gboolean _scrolled(GtkWidget *widget, GdkEventScroll *event, gpointer use
   dt_iop_tonecurve_params_t *p = (dt_iop_tonecurve_params_t *)self->params;
   dt_iop_tonecurve_gui_data_t *c = (dt_iop_tonecurve_gui_data_t *)self->gui_data;
 
+  if(((event->state & gtk_accelerator_get_default_mod_mask()) == darktable.gui->sidebar_scroll_mask) != dt_conf_get_bool("darkroom/ui/sidebar_scroll_default")) return FALSE;
   int ch = c->channel;
   int autoscale_ab = p->tonecurve_autoscale_ab;
 
@@ -1176,7 +1218,7 @@ void gui_init(struct dt_iop_module_t *self)
   c->autoscale_ab = dt_bauhaus_combobox_new(self);
   dt_bauhaus_widget_set_label(c->autoscale_ab, NULL, _("color space"));
   dt_bauhaus_combobox_add(c->autoscale_ab, _("Lab, linked channels"));
-  dt_bauhaus_combobox_add(c->autoscale_ab, _("Lab, independant channels"));
+  dt_bauhaus_combobox_add(c->autoscale_ab, _("Lab, independent channels"));
   dt_bauhaus_combobox_add(c->autoscale_ab, _("XYZ, linked channels"));
   dt_bauhaus_combobox_add(c->autoscale_ab, _("RGB, linked channels"));
   gtk_box_pack_start(GTK_BOX(self->widget), c->autoscale_ab, TRUE, TRUE, 0);
@@ -1206,8 +1248,7 @@ void gui_init(struct dt_iop_module_t *self)
   gtk_notebook_set_current_page(GTK_NOTEBOOK(c->channel_tabs), c->channel);
 
   GtkWidget *tb = dtgtk_togglebutton_new(dtgtk_cairo_paint_colorpicker, CPF_STYLE_FLAT | CPF_DO_NOT_USE_BORDER, NULL);
-  gtk_widget_set_size_request(GTK_WIDGET(tb), DT_PIXEL_APPLY_DPI(14), DT_PIXEL_APPLY_DPI(14));
-  gtk_widget_set_tooltip_text(tb, _("pick GUI color from image"));
+  gtk_widget_set_tooltip_text(tb, _("pick GUI color from image\nctrl+click to select an area"));
   c->colorpicker = tb;
 
   GtkWidget *notebook = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
@@ -1237,7 +1278,7 @@ void gui_init(struct dt_iop_module_t *self)
   g_signal_connect(G_OBJECT(c->area), "leave-notify-event", G_CALLBACK(dt_iop_tonecurve_leave_notify), self);
   g_signal_connect(G_OBJECT(c->area), "enter-notify-event", G_CALLBACK(dt_iop_tonecurve_enter_notify), self);
   g_signal_connect(G_OBJECT(c->area), "configure-event", G_CALLBACK(area_resized), self);
-  g_signal_connect(G_OBJECT(tb), "toggled", G_CALLBACK(pick_toggled), self);
+  g_signal_connect(G_OBJECT(tb), "button-press-event", G_CALLBACK(dt_iop_color_picker_callback_button_press), &c->color_picker);
   g_signal_connect(G_OBJECT(c->area), "scroll-event", G_CALLBACK(_scrolled), self);
   g_signal_connect(G_OBJECT(c->area), "key-press-event", G_CALLBACK(dt_iop_tonecurve_key_press), self);
 
@@ -1279,6 +1320,15 @@ void gui_init(struct dt_iop_module_t *self)
   c->sizegroup = GTK_SIZE_GROUP(gtk_size_group_new(GTK_SIZE_GROUP_HORIZONTAL));
   gtk_size_group_add_widget(c->sizegroup, GTK_WIDGET(c->area));
   gtk_size_group_add_widget(c->sizegroup, GTK_WIDGET(c->channel_tabs));
+
+  dt_iop_init_picker(&c->color_picker,
+              self,
+              DT_COLOR_PICKER_POINT_AREA,
+              _iop_color_picker_get_set,
+              _iop_color_picker_apply,
+              _iop_color_picker_update);
+
+  dt_bauhaus_combobox_set(c->scale, 0); // linear
 }
 
 void gui_cleanup(struct dt_iop_module_t *self)
@@ -1293,7 +1343,6 @@ void gui_cleanup(struct dt_iop_module_t *self)
   self->gui_data = NULL;
 }
 
-
 static gboolean dt_iop_tonecurve_enter_notify(GtkWidget *widget, GdkEventCrossing *event, gpointer user_data)
 {
   gtk_widget_queue_draw(widget);
@@ -1305,7 +1354,6 @@ static gboolean dt_iop_tonecurve_leave_notify(GtkWidget *widget, GdkEventCrossin
   gtk_widget_queue_draw(widget);
   return TRUE;
 }
-
 
 static void picker_scale(const float *in, float *out)
 {
@@ -1320,17 +1368,12 @@ static gboolean dt_iop_tonecurve_draw(GtkWidget *widget, cairo_t *crf, gpointer 
   dt_iop_tonecurve_gui_data_t *c = (dt_iop_tonecurve_gui_data_t *)self->gui_data;
   dt_iop_tonecurve_params_t *p = (dt_iop_tonecurve_params_t *)self->params;
   dt_develop_t *dev = darktable.develop;
-
-  const float color_labels_left[3][3]
-      = { { 0.3f, 0.3f, 0.3f }, { 0.0f, 0.34f, 0.27f }, { 0.0f, 0.27f, 0.58f } };
-
-  const float color_labels_right[3][3]
-      = { { 0.3f, 0.3f, 0.3f }, { 0.53f, 0.08f, 0.28f }, { 0.81f, 0.66f, 0.0f } };
+  dt_iop_tonecurve_global_data_t *gd = (dt_iop_tonecurve_global_data_t *)self->data;
 
   int ch = c->channel;
   int nodes = p->tonecurve_nodes[ch];
   dt_iop_tonecurve_node_t *tonecurve = p->tonecurve[ch];
-  int autoscale_ab = p->tonecurve_autoscale_ab;
+
   if(c->minmax_curve_type[ch] != p->tonecurve_type[ch] || c->minmax_curve_nodes[ch] != p->tonecurve_nodes[ch])
   {
     dt_draw_curve_destroy(c->minmax_curve[ch]);
@@ -1365,56 +1408,57 @@ static gboolean dt_iop_tonecurve_draw(GtkWidget *widget, cairo_t *crf, gpointer 
   int width = allocation.width, height = allocation.height;
   cairo_surface_t *cst = dt_cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
   cairo_t *cr = cairo_create(cst);
-  // clear bg
-  cairo_set_source_rgb(cr, .2, .2, .2);
-  cairo_paint(cr);
 
   cairo_translate(cr, inset, inset);
   width -= 2 * inset;
   height -= 2 * inset;
   char text[256];
 
-#if 0
-  // draw shadow around
-  float alpha = 1.0f;
-  for(int k=0; k<inset; k++)
-  {
-    cairo_rectangle(cr, -k, -k, width + 2*k, height + 2*k);
-    cairo_set_source_rgba(cr, 0, 0, 0, alpha);
-    alpha *= 0.6f;
-    cairo_fill(cr);
-  }
-#else
-  cairo_set_line_width(cr, DT_PIXEL_APPLY_DPI(1.0));
-  cairo_set_source_rgb(cr, .1, .1, .1);
+  // Draw frame borders
+  cairo_set_line_width(cr, DT_PIXEL_APPLY_DPI(0.5));
+  set_color(cr, darktable.bauhaus->graph_border);
   cairo_rectangle(cr, 0, 0, width, height);
-  cairo_stroke(cr);
-#endif
+  cairo_stroke_preserve(cr);
 
-  cairo_set_source_rgb(cr, .3, .3, .3);
-  cairo_rectangle(cr, 0, 0, width, height);
-  cairo_fill(cr);
+  // Draw the background gradient along the diagonal
+  // ch == 0 : black to white
+  // ch == 1 : green to magenta
+  // ch == 2 : blue to yellow
+  const float origin[3][3] = { { 0.0f, 0.0f, 0.0f },                  // L = 0, @ (a, b) = 0
+                               { 0.0f, 231.0f/255.0f, 181.0f/255.0f },// a = -128 @ L = 75, b = 0
+                               { 0.0f, 30.0f/255.0f, 195.0f/255.0f}}; // b = -128 @ L = 75, a = 0
 
-  // draw color labels
-  const int cells = 8;
-  for(int j = 0; j < cells; j++)
-  {
-    for(int i = 0; i < cells; i++)
-    {
-      const float f = (cells - 1 - j + i) / (2.0f * cells - 2.0f);
-      cairo_set_source_rgba(cr, (1.0f - f) * color_labels_left[ch][0] + f * color_labels_right[ch][0],
-                            (1.0f - f) * color_labels_left[ch][1] + f * color_labels_right[ch][1],
-                            (1.0f - f) * color_labels_left[ch][2] + f * color_labels_right[ch][2],
-                            .5f); // blend over to make colors darker, so the overlay is more visible
-      cairo_rectangle(cr, width * i / (float)cells, height * j / (float)cells, width / (float)cells,
-                      height / (float)cells);
-      cairo_fill(cr);
-    }
-  }
+  const float destin[3][3] = { { 1.0f, 1.0f, 1.0f },                  // L = 100 @ (a, b) = 0
+                               { 1.0f, 0.0f, 192.0f/255.0f } ,        // a = 128 @ L = 75, b = 0
+                               { 215.0f/255.0f, 182.0f/255.0f, 0.0f}};// b = 128 @ L = 75, a = 0
+
+  // since Cairo paints with sRGB at gamma 2.4, linear gradients are not linear but garbage and, at 50%,
+  // we dont see the neutral grey we would expect in the middle of a linear gradient between
+  // 2 complimentary colors. So we add it artificially, but that will break the smoothness
+  // of the transition. Maybe this will help people understand how broken are Lab and non-linear
+  // spaces for editing, so let it be ugly to teach them a lesson.
+
+  // middle step for gradients (50 %)
+  const float midgrey = to_log(0.45f, c->loglogscale, ch, c->semilog, 0);
+
+  const float middle[3][3] = { { midgrey, midgrey, midgrey },   // L = 50 @ (a, b) = 0
+                               { 0.67f, 0.67f, 0.67f},          // L = 75 @ (a, b) = 0
+                               { 0.67f, 0.67f, 0.67f}};         // L = 75 @ (a, b) = 0
+
+  const float opacities[3] = { 0.5f, 0.5f, 0.5f};
+
+  cairo_pattern_t *pat;
+  pat = cairo_pattern_create_linear (height, 0.0,  0.0, width);
+  cairo_pattern_add_color_stop_rgba (pat, 1, origin[ch][0], origin[ch][1], origin[ch][2], opacities[ch]);
+  cairo_pattern_add_color_stop_rgba (pat, 0.5, middle[ch][0], middle[ch][1], middle[ch][2], opacities[ch]);
+  cairo_pattern_add_color_stop_rgba (pat, 0, destin[ch][0], destin[ch][1], destin[ch][2], opacities[ch]);
+  cairo_set_source (cr, pat);
+  cairo_fill (cr);
+  cairo_pattern_destroy (pat);
+
 
   // draw grid
-  cairo_set_line_width(cr, DT_PIXEL_APPLY_DPI(.4));
-  cairo_set_source_rgb(cr, .1, .1, .1);
+  set_color(cr, darktable.bauhaus->graph_border);
 
   if (c->loglogscale > 0.0f && ch == ch_L )
   {
@@ -1440,60 +1484,30 @@ static gboolean dt_iop_tonecurve_draw(GtkWidget *widget, cairo_t *crf, gpointer 
   cairo_move_to(cr, 0, height);
   cairo_line_to(cr, width, 0);
   cairo_stroke(cr);
-
-  // if autoscale_ab is on: do not display a and b curves
-  if((autoscale_ab != DT_S_SCALE_MANUAL) && ch != ch_L) goto finally;
-
-  // draw nodes positions
-  cairo_set_line_width(cr, DT_PIXEL_APPLY_DPI(1.));
-  cairo_set_source_rgb(cr, 0.6, 0.6, 0.6);
   cairo_translate(cr, 0, height);
-
-  for(int k = 0; k < nodes; k++)
-  {
-    const float x = to_log(tonecurve[k].x, c->loglogscale, ch, c->semilog, 0),
-                y = to_log(tonecurve[k].y, c->loglogscale, ch, c->semilog, 1);
-
-    cairo_arc(cr, x * width, -y * height, DT_PIXEL_APPLY_DPI(3), 0, 2. * M_PI);
-    cairo_stroke(cr);
-  }
-
-  // draw selected cursor
-  cairo_set_line_width(cr, DT_PIXEL_APPLY_DPI(1.));
-
-  if(c->selected >= 0)
-  {
-    cairo_set_source_rgb(cr, .9, .9, .9);
-    const float x = to_log(tonecurve[c->selected].x, c->loglogscale, ch, c->semilog, 0),
-                y = to_log(tonecurve[c->selected].y, c->loglogscale, ch, c->semilog, 1);
-
-    cairo_arc(cr, x * width, -y * height, DT_PIXEL_APPLY_DPI(4), 0, 2. * M_PI);
-    cairo_stroke(cr);
-  }
 
   // draw histogram in background
   // only if module is enabled
   if(self->enabled)
   {
-    uint32_t *hist;
-    float hist_max;
     float *raw_mean, *raw_min, *raw_max;
     float *raw_mean_output;
     float picker_mean[3], picker_min[3], picker_max[3];
 
-    raw_mean = self->picked_color;
-    raw_min = self->picked_color_min;
-    raw_max = self->picked_color_max;
-    raw_mean_output = self->picked_output_color;
+    raw_mean = gd->picked_color;
+    raw_min = gd->picked_color_min;
+    raw_max = gd->picked_color_max;
+    raw_mean_output = gd->picked_output_color;
 
-    hist = self->histogram;
-    hist_max = dev->histogram_type == DT_DEV_HISTOGRAM_LINEAR ? self->histogram_max[ch]
-                                                              : logf(1.0 + self->histogram_max[ch]);
+    const uint32_t *hist = self->histogram;
+    const float hist_max = dev->histogram_type == DT_DEV_HISTOGRAM_LINEAR ? self->histogram_max[ch]
+                                                                          : logf(1.0 + self->histogram_max[ch]);
     if(hist && hist_max > 0.0f)
     {
       cairo_save(cr);
       cairo_scale(cr, width / 255.0, -(height - DT_PIXEL_APPLY_DPI(5)) / hist_max);
-      cairo_set_source_rgba(cr, .2, .2, .2, 0.5);
+      cairo_move_to(cr, 0, height);
+      set_color(cr, darktable.bauhaus->inset_histogram);
 
       if (ch == ch_L && c->loglogscale > 0.0f && c->semilog != -1)
       {
@@ -1508,11 +1522,14 @@ static gboolean dt_iop_tonecurve_draw(GtkWidget *widget, cairo_t *crf, gpointer 
       cairo_restore(cr);
     }
 
-    if(self->request_color_pick != DT_REQUEST_COLORPICK_OFF)
+    cairo_move_to(cr, 0, height);
+    if(self->request_color_pick == DT_REQUEST_COLORPICK_MODULE)
     {
       // the global live samples ...
       GSList *samples = darktable.lib->proxy.colorpicker.live_samples;
       dt_colorpicker_sample_t *sample = NULL;
+      cairo_set_line_width(cr, DT_PIXEL_APPLY_DPI(3));
+
       while(samples)
       {
         sample = samples->data;
@@ -1526,7 +1543,7 @@ static gboolean dt_iop_tonecurve_draw(GtkWidget *widget, cairo_t *crf, gpointer 
         picker_max[ch] = to_log(picker_max[ch], c->loglogscale, ch, c->semilog, 0);
         picker_mean[ch] = to_log(picker_mean[ch], c->loglogscale, ch, c->semilog, 0);
 
-        cairo_set_source_rgba(cr, 0.5, 0.7, 0.5, 0.15);
+        cairo_set_source_rgba(cr, 0.5, 0.7, 0.5, 0.35);
         cairo_rectangle(cr, width * picker_min[ch], 0, width * fmax(picker_max[ch] - picker_min[ch], 0.0f),
                         -height);
         cairo_fill(cr);
@@ -1541,6 +1558,7 @@ static gboolean dt_iop_tonecurve_draw(GtkWidget *widget, cairo_t *crf, gpointer 
       // ... and the local sample
       if(raw_max[0] >= 0.0f)
       {
+        cairo_save(cr);
         PangoLayout *layout;
         PangoRectangle ink;
         PangoFontDescription *desc = pango_font_description_copy_static(darktable.bauhaus->pango_font_desc);
@@ -1564,7 +1582,7 @@ static gboolean dt_iop_tonecurve_draw(GtkWidget *widget, cairo_t *crf, gpointer 
         picker_max[ch] = to_log(picker_max[ch], c->loglogscale, ch, c->semilog, 0);
         picker_mean[ch] = to_log(picker_mean[ch], c->loglogscale, ch, c->semilog, 0);
 
-        cairo_set_source_rgba(cr, 0.7, 0.5, 0.5, 0.33);
+        cairo_set_source_rgba(cr, 0.7, 0.5, 0.5, 0.35);
         cairo_rectangle(cr, width * picker_min[ch], 0, width * fmax(picker_max[ch] - picker_min[ch], 0.0f),
                         -height);
         cairo_fill(cr);
@@ -1575,7 +1593,7 @@ static gboolean dt_iop_tonecurve_draw(GtkWidget *widget, cairo_t *crf, gpointer 
 
         snprintf(text, sizeof(text), "%.1f → %.1f", raw_mean[ch], raw_mean_output[ch]);
 
-        cairo_set_source_rgb(cr, 0.1, 0.1, 0.1);
+        set_color(cr, darktable.bauhaus->graph_fg);
         cairo_set_font_size(cr, DT_PIXEL_APPLY_DPI(0.04) * height);
         pango_layout_set_text(layout, text, -1);
         pango_layout_get_pixel_extents(layout, &ink, NULL);
@@ -1584,10 +1602,51 @@ static gboolean dt_iop_tonecurve_draw(GtkWidget *widget, cairo_t *crf, gpointer 
         cairo_stroke(cr);
         pango_font_description_free(desc);
         g_object_unref(layout);
+        cairo_restore(cr);
       }
     }
   }
 
+  // draw curve
+  cairo_set_line_width(cr, DT_PIXEL_APPLY_DPI(3));
+  set_color(cr, darktable.bauhaus->graph_fg);
+
+  for(int k = 0; k < DT_IOP_TONECURVE_RES; k++)
+  {
+    const float xx = k / (DT_IOP_TONECURVE_RES - 1.0f);
+    float yy;
+
+    if(xx > xm)
+    {
+      yy = dt_iop_eval_exp(unbounded_coeffs, xx);
+    }
+    else
+    {
+      yy = c->draw_ys[k];
+    }
+
+    const float x = to_log(xx, c->loglogscale, ch, c->semilog, 0),
+                y = to_log(yy, c->loglogscale, ch, c->semilog, 1);
+
+    cairo_line_to(cr, x * width, -height * y);
+  }
+  cairo_stroke(cr);
+
+  // draw nodes positions
+  cairo_set_line_width(cr, DT_PIXEL_APPLY_DPI(3));
+  for(int k = 0; k < nodes; k++)
+  {
+    const float x = to_log(tonecurve[k].x, c->loglogscale, ch, c->semilog, 0),
+                y = to_log(tonecurve[k].y, c->loglogscale, ch, c->semilog, 1);
+
+    cairo_arc(cr, x * width, -y * height, DT_PIXEL_APPLY_DPI(4), 0, 2. * M_PI);
+    set_color(cr, darktable.bauhaus->graph_fg);
+    cairo_stroke_preserve(cr);
+    set_color(cr, darktable.bauhaus->graph_bg);
+    cairo_fill(cr);
+  }
+
+  // draw selected cursor
   if(c->selected >= 0)
   {
     // draw information about current selected node
@@ -1614,7 +1673,7 @@ static gboolean dt_iop_tonecurve_draw(GtkWidget *widget, cairo_t *crf, gpointer 
     const float d_node_value = y_node_value - x_node_value;
     snprintf(text, sizeof(text), "%.1f / %.1f ( %+.1f)", x_node_value, y_node_value, d_node_value);
 
-    cairo_set_source_rgb(cr, 0.1, 0.1, 0.1);
+    set_color(cr, darktable.bauhaus->graph_fg);
     pango_layout_set_text(layout, text, -1);
     pango_layout_get_pixel_extents(layout, &ink, NULL);
     cairo_move_to(cr, 0.98f * width - ink.width - ink.x, -0.02 * height - ink.height - ink.y);
@@ -1624,45 +1683,14 @@ static gboolean dt_iop_tonecurve_draw(GtkWidget *widget, cairo_t *crf, gpointer 
     g_object_unref(layout);
 
     // enlarge selected node
-    cairo_set_source_rgb(cr, .9, .9, .9);
+    set_color(cr, darktable.bauhaus->graph_fg_active);
     const float x = to_log(tonecurve[c->selected].x, c->loglogscale, ch, c->semilog, 0),
                 y = to_log(tonecurve[c->selected].y, c->loglogscale, ch, c->semilog, 1);
 
-    cairo_arc(cr, x * width, -y * height, DT_PIXEL_APPLY_DPI(4),
-              0, 2. * M_PI);
-    cairo_stroke(cr);
+    cairo_arc(cr, x * width, -y * height, DT_PIXEL_APPLY_DPI(6), 0, 2. * M_PI);
+    cairo_fill(cr);
   }
 
-  // draw curve
-  cairo_set_line_width(cr, DT_PIXEL_APPLY_DPI(2.));
-  cairo_set_source_rgb(cr, .9, .9, .9);
-  // cairo_set_line_cap  (cr, CAIRO_LINE_CAP_SQUARE);
-
-  const float y_offset = to_log(c->draw_ys[0], c->loglogscale, ch, c->semilog, 1);
-  cairo_move_to(cr, 0, -height * y_offset);
-
-  for(int k = 1; k < DT_IOP_TONECURVE_RES; k++)
-  {
-    const float xx = k / (DT_IOP_TONECURVE_RES - 1.0f);
-    float yy;
-
-    if(xx > xm)
-    {
-      yy = dt_iop_eval_exp(unbounded_coeffs, xx);
-    }
-    else
-    {
-      yy = c->draw_ys[k];
-    }
-
-    const float x = to_log(xx, c->loglogscale, ch, c->semilog, 0),
-                y = to_log(yy, c->loglogscale, ch, c->semilog, 1);
-
-    cairo_line_to(cr, x * width, -height * y);
-  }
-  cairo_stroke(cr);
-
-finally:
   cairo_destroy(cr);
   cairo_set_source_surface(crf, cst, 0, 0);
   cairo_paint(crf);

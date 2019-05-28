@@ -25,6 +25,7 @@
 #include "common/metadata.h"
 #include "common/pwstorage/pwstorage.h"
 #include "common/tags.h"
+#include "common/curl_tools.h"
 #include "control/conf.h"
 #include "control/control.h"
 #include "dtgtk/button.h"
@@ -57,6 +58,7 @@ DT_MODULE(1)
 
 #define MSGCOLOR_RED "#e07f7f"
 #define MSGCOLOR_GREEN "#7fe07f"
+#define FACEBOOK_EXTRA_VERBOSE FALSE
 
 typedef enum ComboUserModel
 {
@@ -262,7 +264,7 @@ static size_t curl_write_data_cb(void *ptr, size_t size, size_t nmemb, void *dat
 {
   GString *string = (GString *)data;
   g_string_append_len(string, ptr, size * nmemb);
-#ifdef FACEBOOK_EXTRA_VERBOSE
+#if FACEBOOK_EXTRA_VERBOSE == TRUE
   g_printf("server reply: %s\n", string->str);
 #endif
   return size * nmemb;
@@ -326,13 +328,11 @@ static JsonObject *fb_query_get(FBContext *ctx, const gchar *method, GHashTable 
 
   // send the request
   GString *response = g_string_new("");
-  curl_easy_reset(ctx->curl_ctx);
+
+  dt_curl_init(ctx->curl_ctx, FACEBOOK_EXTRA_VERBOSE);
+
   curl_easy_setopt(ctx->curl_ctx, CURLOPT_URL, url->str);
-#ifdef FACEBOOK_EXTRA_VERBOSE
-  curl_easy_setopt(ctx->curl_ctx, CURLOPT_VERBOSE, 2);
-#endif
   curl_easy_setopt(ctx->curl_ctx, CURLOPT_WRITEFUNCTION, curl_write_data_cb);
-  curl_easy_setopt(ctx->curl_ctx, CURLOPT_SSL_VERIFYPEER, FALSE);
   curl_easy_setopt(ctx->curl_ctx, CURLOPT_WRITEDATA, response);
   int res = curl_easy_perform(ctx->curl_ctx);
 
@@ -404,13 +404,11 @@ static JsonObject *fb_query_post(FBContext *ctx, const gchar *method, GHashTable
 
   // send the requests
   GString *response = g_string_new("");
-  curl_easy_reset(ctx->curl_ctx);
+
+  dt_curl_init(ctx->curl_ctx, FACEBOOK_EXTRA_VERBOSE);
+
   curl_easy_setopt(ctx->curl_ctx, CURLOPT_URL, url->str);
-#ifdef FACEBOOK_EXTRA_VERBOSE
-  curl_easy_setopt(ctx->curl_ctx, CURLOPT_VERBOSE, 2);
-#endif
   curl_easy_setopt(ctx->curl_ctx, CURLOPT_HTTPPOST, formlist.formpost);
-  curl_easy_setopt(ctx->curl_ctx, CURLOPT_SSL_VERIFYPEER, FALSE);
   curl_easy_setopt(ctx->curl_ctx, CURLOPT_WRITEFUNCTION, curl_write_data_cb);
   curl_easy_setopt(ctx->curl_ctx, CURLOPT_WRITEDATA, response);
   int res = curl_easy_perform(ctx->curl_ctx);
@@ -601,7 +599,8 @@ static gboolean _open_browser(const char *callback_url)
                                              "&scope=user_photos,publish_actions"
                                              "&response_type=token",
                               callback_url);
-  if(!gtk_show_uri(gdk_screen_get_default(), url, gtk_get_current_event_time(), &error))
+  GtkWidget *win = dt_ui_main_window(darktable.gui->ui);
+  if(!gtk_show_uri_on_window(GTK_WINDOW(win), url, gtk_get_current_event_time(), &error))
   {
     fprintf(stderr, "[facebook] error opening browser: %s\n", error->message);
     g_error_free(error);
@@ -634,7 +633,7 @@ static gchar *facebook_get_user_auth_token_from_url(dt_storage_facebook_gui_data
   gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(fb_auth_dialog), "%s\n\n%s", text1, text2);
 
   GtkWidget *entry = gtk_entry_new();
-  GtkWidget *hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+  GtkWidget *hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
   gtk_box_pack_start(GTK_BOX(hbox), GTK_WIDGET(gtk_label_new(_("URL:"))), FALSE, FALSE, 0);
   gtk_box_pack_start(GTK_BOX(hbox), GTK_WIDGET(entry), TRUE, TRUE, 0);
 
@@ -1185,25 +1184,25 @@ void gui_init(struct dt_imageio_module_storage_t *self)
 
   // pack the ui
   ////the auth box
-  GtkWidget *hbox_auth = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+  GtkWidget *hbox_auth = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
   GtkWidget *vbox_auth_labels = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
   GtkWidget *vbox_auth_fields = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
   gtk_box_pack_start(GTK_BOX(hbox_auth), vbox_auth_labels, FALSE, FALSE, 0);
   gtk_box_pack_start(GTK_BOX(hbox_auth), vbox_auth_fields, TRUE, TRUE, 0);
-  gtk_box_pack_start(GTK_BOX(self->widget), GTK_WIDGET(hbox_auth), TRUE, FALSE, 2);
-  gtk_box_pack_start(GTK_BOX(vbox_auth_fields), GTK_WIDGET(ui->comboBox_username), TRUE, FALSE, 2);
+  gtk_box_pack_start(GTK_BOX(self->widget), GTK_WIDGET(hbox_auth), TRUE, FALSE, 0);
+  gtk_box_pack_start(GTK_BOX(vbox_auth_fields), GTK_WIDGET(ui->comboBox_username), TRUE, FALSE, 0);
 
-  gtk_box_pack_start(GTK_BOX(vbox_auth_labels), GTK_WIDGET(gtk_label_new("")), TRUE, TRUE, 2);
-  gtk_box_pack_start(GTK_BOX(vbox_auth_fields), GTK_WIDGET(ui->button_login), TRUE, FALSE, 2);
+  gtk_box_pack_start(GTK_BOX(vbox_auth_labels), GTK_WIDGET(gtk_label_new("")), TRUE, TRUE, 0);
+  gtk_box_pack_start(GTK_BOX(vbox_auth_fields), GTK_WIDGET(ui->button_login), TRUE, FALSE, 0);
 
-  gtk_box_pack_start(GTK_BOX(vbox_auth_fields), GTK_WIDGET(albumlist), TRUE, FALSE, 2);
+  gtk_box_pack_start(GTK_BOX(vbox_auth_fields), GTK_WIDGET(albumlist), TRUE, FALSE, 0);
 
   ////the album creation box
-  ui->hbox_album = GTK_BOX(gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5));
+  ui->hbox_album = GTK_BOX(gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0));
   gtk_widget_set_no_show_all(GTK_WIDGET(ui->hbox_album), TRUE); // hide it by default
   GtkWidget *vbox_album_labels = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
   GtkWidget *vbox_album_fields = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-  gtk_box_pack_start(GTK_BOX(self->widget), GTK_WIDGET(ui->hbox_album), TRUE, FALSE, 5);
+  gtk_box_pack_start(GTK_BOX(self->widget), GTK_WIDGET(ui->hbox_album), TRUE, FALSE, 0);
   gtk_box_pack_start(GTK_BOX(ui->hbox_album), vbox_album_labels, FALSE, FALSE, 0);
   gtk_box_pack_start(GTK_BOX(ui->hbox_album), vbox_album_fields, TRUE, TRUE, 0);
   gtk_box_pack_start(GTK_BOX(vbox_album_labels), GTK_WIDGET(ui->label_album_title), TRUE, TRUE, 0);

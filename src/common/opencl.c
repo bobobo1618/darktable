@@ -21,13 +21,14 @@
 
 #include "common/opencl.h"
 #include "common/bilateralcl.h"
-#include "common/locallaplaciancl.h"
 #include "common/darktable.h"
 #include "common/dlopencl.h"
-#include "common/gaussian.h"
-#include "common/interpolation.h"
 #include "common/dwt.h"
+#include "common/gaussian.h"
+#include "common/guided_filter.h"
 #include "common/heal.h"
+#include "common/interpolation.h"
+#include "common/locallaplaciancl.h"
 #include "common/nvidia_gpus.h"
 #include "common/opencl_drivers_blacklist.h"
 #include "control/conf.h"
@@ -58,6 +59,8 @@ static void dt_opencl_priorities_parse(dt_opencl_t *cl, const char *configstr);
 static void dt_opencl_update_priorities(const char *configstr);
 /** read scheduling profile for config variables */
 static dt_opencl_scheduling_profile_t dt_opencl_get_scheduling_profile(void);
+/** read config of when/if to sync to cache */
+static dt_opencl_sync_cache_t dt_opencl_get_sync_cache(void);
 /** adjust opencl subsystem according to scheduling profile */
 static void dt_opencl_apply_scheduling_profile(dt_opencl_scheduling_profile_t profile);
 /** set opencl specific synchronization timeout */
@@ -104,7 +107,7 @@ int dt_opencl_get_device_info(dt_opencl_t *cl, cl_device_id device, cl_device_in
       goto error;
     }
 
-    // allocation succeeed, update pointer.
+    // allocation succeeded, update pointer.
     *param_value = ptr;
   }
 
@@ -182,6 +185,16 @@ static int dt_opencl_device_init(dt_opencl_t *cl, const int dev, cl_device_id *d
   cl_bool device_available = 0;
   cl_uint vendor_id = 0;
   cl_bool little_endian = 0;
+
+  char *dtcache = calloc(PATH_MAX, sizeof(char));
+  char *cachedir = calloc(PATH_MAX, sizeof(char));
+  char *devname = calloc(1024, sizeof(char));
+  char *drvversion = calloc(1024, sizeof(char));
+
+  char *dtpath = calloc(PATH_MAX, sizeof(char));
+  char *filename = calloc(PATH_MAX, sizeof(char));
+  char *confentry = calloc(PATH_MAX, sizeof(char));
+  char *binname = calloc(PATH_MAX, sizeof(char));
 
   // test GPU availability, vendor, memory, image support etc:
   (cl->dlocl->symbols->dt_clGetDeviceInfo)(devid, CL_DEVICE_AVAILABLE, sizeof(cl_bool), &device_available, NULL);
@@ -349,19 +362,22 @@ static int dt_opencl_device_init(dt_opencl_t *cl, const int dev, cl_device_id *d
     goto end;
   }
 
-  char dtcache[PATH_MAX] = { 0 };
-  char cachedir[PATH_MAX] = { 0 };
-  char devname[1024];
   double tstart, tend, tdiff;
-  dt_loc_get_user_cache_dir(dtcache, sizeof(dtcache));
+  dt_loc_get_user_cache_dir(dtcache, PATH_MAX * sizeof(char));
 
-  int len = strlen(infostr);
+  int len = MIN(strlen(infostr),1024 * sizeof(char));;
   int j = 0;
   // remove non-alphanumeric chars from device name
   for(int i = 0; i < len; i++)
     if(isalnum(infostr[i])) devname[j++] = infostr[i];
   devname[j] = 0;
-  snprintf(cachedir, sizeof(cachedir), "%s" G_DIR_SEPARATOR_S "cached_kernels_for_%s", dtcache, devname);
+  len = MIN(strlen(driverversion), 1024 * sizeof(char));
+  j = 0;
+  // remove non-alphanumeric chars from driver version
+  for(int i = 0; i < len; i++)
+    if(isalnum(driverversion[i])) drvversion[j++] = driverversion[i];
+  drvversion[j] = 0;
+  snprintf(cachedir, PATH_MAX * sizeof(char), "%s" G_DIR_SEPARATOR_S "cached_kernels_for_%s_%s", dtcache, devname, drvversion);
   if(g_mkdir_with_parents(cachedir, 0700) == -1)
   {
     dt_print(DT_DEBUG_OPENCL, "[opencl_init] failed to create directory `%s'!\n", cachedir);
@@ -369,12 +385,8 @@ static int dt_opencl_device_init(dt_opencl_t *cl, const int dev, cl_device_id *d
     goto end;
   }
 
-  char dtpath[PATH_MAX] = { 0 };
-  char filename[PATH_MAX] = { 0 };
-  char confentry[PATH_MAX] = { 0 };
-  char binname[PATH_MAX] = { 0 };
-  dt_loc_get_datadir(dtpath, sizeof(dtpath));
-  snprintf(filename, sizeof(filename), "%s" G_DIR_SEPARATOR_S "kernels" G_DIR_SEPARATOR_S "programs.conf", dtpath);
+  dt_loc_get_datadir(dtpath, PATH_MAX * sizeof(char));
+  snprintf(filename, PATH_MAX * sizeof(char), "%s" G_DIR_SEPARATOR_S "kernels" G_DIR_SEPARATOR_S "programs.conf", dtpath);
   char kerneldir[PATH_MAX] = { 0 };
   snprintf(kerneldir, sizeof(kerneldir), "%s" G_DIR_SEPARATOR_S "kernels", dtpath);
   char *escapedkerneldir = NULL;
@@ -384,7 +396,7 @@ static int dt_opencl_device_init(dt_opencl_t *cl, const int dev, cl_device_id *d
   escapedkerneldir = dt_util_str_replace(kerneldir, " ", "\\ ");
 #endif
 
-  options = g_strdup_printf("-cl-fast-relaxed-math %s -D%s=1 -I%s",
+  options = g_strdup_printf("-cl-mad-enable %s -D%s=1 -I%s",
                             (cl->dev[dev].nvidia_sm_20 ? " -DNVIDIA_SM_20=1" : ""),
                             dt_opencl_get_vendor_by_id(vendor_id), escapedkerneldir);
   cl->dev[dev].options = strdup(options);
@@ -410,7 +422,7 @@ static int dt_opencl_device_init(dt_opencl_t *cl, const int dev, cl_device_id *d
     while(!feof(f))
     {
       int prog = -1;
-      gchar *confline_pattern = g_strdup_printf("%%%zu[^\n]\n", sizeof(confentry) - 1);
+      gchar *confline_pattern = g_strdup_printf("%%%zu[^\n]\n", PATH_MAX * sizeof(char) - 1);
       int rd = fscanf(f, confline_pattern, confentry);
       g_free(confline_pattern);
       if(rd != 1) continue;
@@ -448,8 +460,8 @@ static int dt_opencl_device_init(dt_opencl_t *cl, const int dev, cl_device_id *d
         continue;
       }
 
-      snprintf(filename, sizeof(filename), "%s" G_DIR_SEPARATOR_S "kernels" G_DIR_SEPARATOR_S "%s", dtpath, programname);
-      snprintf(binname, sizeof(binname), "%s" G_DIR_SEPARATOR_S "%s.bin", cachedir, programname);
+      snprintf(filename, PATH_MAX * sizeof(char), "%s" G_DIR_SEPARATOR_S "kernels" G_DIR_SEPARATOR_S "%s", dtpath, programname);
+      snprintf(binname, PATH_MAX * sizeof(char), "%s" G_DIR_SEPARATOR_S "%s.bin", cachedir, programname);
       dt_print(DT_DEBUG_OPENCL, "[opencl_init] compiling program `%s' ..\n", programname);
       int loaded_cached;
       char md5sum[33];
@@ -490,6 +502,16 @@ end:
   free(driverversion);
   free(deviceversion);
 
+  free(dtcache);
+  free(cachedir);
+  free(devname);
+  free(drvversion);
+
+  free(dtpath);
+  free(filename);
+  free(confentry);
+  free(binname);
+
   return res;
 }
 
@@ -517,12 +539,13 @@ void dt_opencl_init(dt_opencl_t *cl, const gboolean exclude_opencl, const gboole
 
   cl->avoid_atomics = dt_conf_get_bool("opencl_avoid_atomics");
   cl->async_pixelpipe = dt_conf_get_bool("opencl_async_pixelpipe");
-  cl->synch_cache = dt_conf_get_bool("opencl_synch_cache");
+  cl->sync_cache = dt_opencl_get_sync_cache();
   cl->micro_nap = dt_conf_get_int("opencl_micro_nap");
   cl->crc = 5781;
   cl->dlocl = NULL;
   cl->dev_priority_image = NULL;
   cl->dev_priority_preview = NULL;
+  cl->dev_priority_preview2 = NULL;
   cl->dev_priority_export = NULL;
   cl->dev_priority_thumbnail = NULL;
 
@@ -561,7 +584,9 @@ void dt_opencl_init(dt_opencl_t *cl, const gboolean exclude_opencl, const gboole
            dt_conf_get_int("opencl_size_roundup"));
   dt_print(DT_DEBUG_OPENCL, "[opencl_init] opencl_async_pixelpipe: %d\n",
            dt_conf_get_bool("opencl_async_pixelpipe"));
-  dt_print(DT_DEBUG_OPENCL, "[opencl_init] opencl_synch_cache: %d\n", dt_conf_get_bool("opencl_synch_cache"));
+  str = dt_conf_get_string("opencl_synch_cache");
+  dt_print(DT_DEBUG_OPENCL, "[opencl_init] opencl_synch_cache: %s\n", str);
+  g_free(str);
   dt_print(DT_DEBUG_OPENCL, "[opencl_init] opencl_number_event_handles: %d\n",
            dt_conf_get_int("opencl_number_event_handles"));
   dt_print(DT_DEBUG_OPENCL, "[opencl_init] opencl_micro_nap: %d\n", dt_conf_get_int("opencl_micro_nap"));
@@ -688,12 +713,13 @@ void dt_opencl_init(dt_opencl_t *cl, const gboolean exclude_opencl, const gboole
     memset(cl->mandatory, 0, sizeof(cl->mandatory));
     cl->dev_priority_image = (int *)malloc(sizeof(int) * (dev + 1));
     cl->dev_priority_preview = (int *)malloc(sizeof(int) * (dev + 1));
+    cl->dev_priority_preview2 = (int *)malloc(sizeof(int) * (dev + 1));
     cl->dev_priority_export = (int *)malloc(sizeof(int) * (dev + 1));
     cl->dev_priority_thumbnail = (int *)malloc(sizeof(int) * (dev + 1));
 
     // only check successful malloc in debug mode; darktable will crash anyhow sooner or later if mallocs that
     // small would fail
-    assert(cl->dev_priority_image != NULL && cl->dev_priority_preview != NULL
+    assert(cl->dev_priority_image != NULL && cl->dev_priority_preview != NULL && cl->dev_priority_preview2 != NULL
            && cl->dev_priority_export != NULL && cl->dev_priority_thumbnail != NULL);
 
     dt_print(DT_DEBUG_OPENCL, "[opencl_init] OpenCL successfully initialized.\n");
@@ -722,6 +748,8 @@ finally:
     cl->local_laplacian = dt_local_laplacian_init_cl_global();
     cl->dwt = dt_dwt_init_cl_global();
     cl->heal = dt_heal_init_cl_global();
+    cl->colorspaces = dt_colorspaces_init_cl_global();
+    cl->guided_filter = dt_guided_filter_init_cl_global();
 
     char checksum[64];
     snprintf(checksum, sizeof(checksum), "%u", cl->crc);
@@ -825,6 +853,8 @@ void dt_opencl_cleanup(dt_opencl_t *cl)
     dt_interpolation_free_cl_global(cl->interpolation);
     dt_dwt_free_cl_global(cl->dwt);
     dt_heal_free_cl_global(cl->heal);
+    dt_colorspaces_free_cl_global(cl->colorspaces);
+    dt_guided_filter_free_cl_global(cl->guided_filter);
 
     for(int i = 0; i < cl->num_devs; i++)
     {
@@ -872,6 +902,7 @@ void dt_opencl_cleanup(dt_opencl_t *cl)
     }
     free(cl->dev_priority_image);
     free(cl->dev_priority_preview);
+    free(cl->dev_priority_preview2);
     free(cl->dev_priority_export);
     free(cl->dev_priority_thumbnail);
   }
@@ -946,7 +977,7 @@ static float dt_opencl_benchmark_gpu(const int devid, const size_t width, const 
 
   unsigned int *const tea_states = calloc(2 * dt_get_num_threads(), sizeof(unsigned int));
 
-  buf = dt_alloc_align(16, width * height * bpp);
+  buf = dt_alloc_align(64, width * height * bpp);
   if(buf == NULL) goto error;
 
 #ifdef _OPENMP
@@ -1019,7 +1050,7 @@ static float dt_opencl_benchmark_cpu(const size_t width, const size_t height, co
 
   unsigned int *const tea_states = calloc(2 * dt_get_num_threads(), sizeof(unsigned int));
 
-  buf = dt_alloc_align(16, width * height * bpp);
+  buf = dt_alloc_align(64, width * height * bpp);
   if(buf == NULL) goto error;
 
 #ifdef _OPENMP
@@ -1320,6 +1351,9 @@ static void dt_opencl_priorities_parse(dt_opencl_t *cl, const char *configstr)
 
   prio = _strsep(&str, "/");
   dt_opencl_priority_parse(cl, prio, cl->dev_priority_thumbnail, &cl->mandatory[3]);
+
+  prio = _strsep(&str, "/");
+  dt_opencl_priority_parse(cl, prio, cl->dev_priority_preview2, &cl->mandatory[4]);
 }
 
 // set device priorities according to config string
@@ -1329,14 +1363,14 @@ static void dt_opencl_update_priorities(const char *configstr)
   dt_opencl_priorities_parse(cl, configstr);
 
   dt_print(DT_DEBUG_OPENCL, "[opencl_priorities] these are your device priorities:\n");
-  dt_print(DT_DEBUG_OPENCL, "[opencl_priorities] \t\timage\tpreview\texport\tthumbnail\n");
+  dt_print(DT_DEBUG_OPENCL, "[opencl_priorities] \t\timage\tpreview\texport\tthumbnail\tpreview2\n");
   for(int i = 0; i < cl->num_devs; i++)
-    dt_print(DT_DEBUG_OPENCL, "[opencl_priorities]\t\t%d\t%d\t%d\t%d\n", cl->dev_priority_image[i],
-             cl->dev_priority_preview[i], cl->dev_priority_export[i], cl->dev_priority_thumbnail[i]);
+    dt_print(DT_DEBUG_OPENCL, "[opencl_priorities]\t\t%d\t%d\t%d\t%d\t%d\n", cl->dev_priority_image[i],
+             cl->dev_priority_preview[i], cl->dev_priority_export[i], cl->dev_priority_thumbnail[i], cl->dev_priority_preview2[i]);
   dt_print(DT_DEBUG_OPENCL, "[opencl_priorities] show if opencl use is mandatory for a given pixelpipe:\n");
-  dt_print(DT_DEBUG_OPENCL, "[opencl_priorities] \t\timage\tpreview\texport\tthumbnail\n");
-  dt_print(DT_DEBUG_OPENCL, "[opencl_priorities]\t\t%d\t%d\t%d\t%d\n", cl->mandatory[0],
-             cl->mandatory[1], cl->mandatory[2], cl->mandatory[3]);
+  dt_print(DT_DEBUG_OPENCL, "[opencl_priorities] \t\timage\tpreview\texport\tthumbnail\tpreview2\n");
+  dt_print(DT_DEBUG_OPENCL, "[opencl_priorities]\t\t%d\t%d\t%d\t%d\t%d\n", cl->mandatory[0],
+             cl->mandatory[1], cl->mandatory[2], cl->mandatory[3], cl->mandatory[4]);
 }
 
 int dt_opencl_lock_device(const int pipetype)
@@ -1368,6 +1402,10 @@ int dt_opencl_lock_device(const int pipetype)
     case DT_DEV_PIXELPIPE_THUMBNAIL:
       memcpy(priority, cl->dev_priority_thumbnail, prio_size);
       mandatory = cl->mandatory[3];
+      break;
+    case DT_DEV_PIXELPIPE_PREVIEW2:
+      memcpy(priority, cl->dev_priority_preview2, prio_size);
+      mandatory = cl->mandatory[4];
       break;
     default:
       free(priority);
@@ -2316,6 +2354,43 @@ int dt_opencl_get_mem_context_id(cl_mem mem)
   return -1;
 }
 
+int dt_opencl_get_image_width(cl_mem mem)
+{
+  cl_int err;
+  size_t size;
+  if(mem == NULL) return 0;
+
+  err = (darktable.opencl->dlocl->symbols->dt_clGetImageInfo)(mem, CL_IMAGE_WIDTH, sizeof(size), &size, NULL);
+  if(size > INT_MAX) size = 0;
+
+  return (err == CL_SUCCESS) ? (int)size : 0;
+}
+
+int dt_opencl_get_image_height(cl_mem mem)
+{
+  cl_int err;
+  size_t size;
+  if(mem == NULL) return 0;
+
+  err = (darktable.opencl->dlocl->symbols->dt_clGetImageInfo)(mem, CL_IMAGE_HEIGHT, sizeof(size), &size, NULL);
+  if(size > INT_MAX) size = 0;
+
+  return (err == CL_SUCCESS) ? (int)size : 0;
+}
+
+int dt_opencl_get_image_element_size(cl_mem mem)
+{
+  cl_int err;
+  size_t size;
+  if(mem == NULL) return 0;
+
+  err = (darktable.opencl->dlocl->symbols->dt_clGetImageInfo)(mem, CL_IMAGE_ELEMENT_SIZE, sizeof(size), &size,
+                                                              NULL);
+  if(size > INT_MAX) size = 0;
+
+  return (err == CL_SUCCESS) ? (int)size : 0;
+}
+
 void dt_opencl_memory_statistics(int devid, cl_mem mem, dt_opencl_memory_t action)
 {
   if(devid < 0)
@@ -2420,6 +2495,7 @@ void dt_opencl_disable(void)
 /** update enabled flag and profile with value from preferences, returns enabled flag */
 int dt_opencl_update_settings(void)
 {
+  // FIXME: This pulls in prefs every time the pixelpipe runs. Instead have a callback for DT_SIGNAL_PREFERENCES_CHANGE?
   if(!darktable.opencl->inited) return FALSE;
   const int prefs = dt_conf_get_bool("opencl");
 
@@ -2441,6 +2517,16 @@ int dt_opencl_update_settings(void)
     dt_opencl_apply_scheduling_profile(profile);
   }
 
+  dt_opencl_sync_cache_t sync = dt_opencl_get_sync_cache();
+
+  if(darktable.opencl->sync_cache != sync)
+  {
+    char *pstr = dt_conf_get_string("opencl_synch_cache");
+    dt_print(DT_DEBUG_OPENCL, "[opencl_update_synch_cache] sync cache set to %s\n", pstr);
+    g_free(pstr);
+    darktable.opencl->sync_cache = sync;
+  }
+
   return (darktable.opencl->enabled && !darktable.opencl->stopped);
 }
 
@@ -2460,6 +2546,24 @@ static dt_opencl_scheduling_profile_t dt_opencl_get_scheduling_profile(void)
   g_free(pstr);
 
   return profile;
+}
+
+/** read config of when/if to synch to cache */
+static dt_opencl_sync_cache_t dt_opencl_get_sync_cache(void)
+{
+  char *pstr = dt_conf_get_string("opencl_synch_cache");
+  if(!pstr) return OPENCL_SYNC_ACTIVE_MODULE;
+
+  dt_opencl_sync_cache_t sync = OPENCL_SYNC_ACTIVE_MODULE;
+
+  if(!strcmp(pstr, "true"))
+    sync = OPENCL_SYNC_TRUE;
+  else if(!strcmp(pstr, "false"))
+    sync = OPENCL_SYNC_FALSE;
+
+  g_free(pstr);
+
+  return sync;
 }
 
 /** set opencl specific synchronization timeout */

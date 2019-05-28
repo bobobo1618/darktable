@@ -56,10 +56,20 @@ typedef enum dt_signal_t
    */
   DT_SIGNAL_VIEWMANAGER_FILMSTRIP_ACTIVATE,
 
-  /** \brief This signal is raised when collection query is changed
+  /** \brief This signal is raised when collection changed
   no param, no returned value
     */
   DT_SIGNAL_COLLECTION_CHANGED,
+
+  /** \brief This signal is raised when collection query is changed
+  no param, no returned value
+    */
+  DT_SIGNAL_COLLECTION_QUERY_CHANGED,
+
+  /** \brief This signal is raised when the selection is changed
+  no param, no returned value
+    */
+  DT_SIGNAL_SELECTION_CHANGED,
 
   /** \brief This signal is raised when a tag is added/deleted/changed  */
   DT_SIGNAL_TAG_CHANGED,
@@ -100,6 +110,11 @@ typedef enum dt_signal_t
     */
   DT_SIGNAL_DEVELOP_PREVIEW_PIPE_FINISHED,
 
+  /** \brief This signal is raised when develop preview2 pipe process is finished
+  no param, no returned value
+    */
+  DT_SIGNAL_DEVELOP_PREVIEW2_PIPE_FINISHED,
+
   /** \brief This signal is rasied when pipe is finished and the gui is attached
   no param, no returned value
     */
@@ -123,6 +138,12 @@ typedef enum dt_signal_t
   no param, no returned value
     */
   DT_SIGNAL_CONTROL_PROFILE_CHANGED,
+
+  /** \brief This signal is raised when a profile is changed by the user
+    1 uint32_t :  the profile type that has changed
+    no return
+    */
+  DT_SIGNAL_CONTROL_PROFILE_USER_CHANGED,
 
   /** \brief This signal is raised when a new image is imported (not cloned)
     1 uint32_t :  the new image id

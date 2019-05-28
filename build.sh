@@ -2,6 +2,9 @@
 
 set -e
 
+# setup local hooks
+git config core.hooksPath .githooks
+
 DT_SRC_DIR=$(dirname "$0")
 DT_SRC_DIR=$(cd "$DT_SRC_DIR" && pwd -P)
 
@@ -15,8 +18,8 @@ BUILD_TYPE_DEFAULT="RelWithDebInfo"
 BUILD_TYPE="$BUILD_TYPE_DEFAULT"
 BUILD_DIR_DEFAULT="$DT_SRC_DIR/build"
 BUILD_DIR="$BUILD_DIR_DEFAULT"
-BUILD_GENERATOR_DFEAULT="Unix Makefiles"
-BUILD_GENERATOR="$BUILD_GENERATOR_DFEAULT"
+BUILD_GENERATOR_DEFAULT="Unix Makefiles"
+BUILD_GENERATOR="$BUILD_GENERATOR_DEFAULT"
 MAKE_TASKS=-1
 ADDRESS_SANITIZER=0
 DO_CONFIG=1
@@ -327,4 +330,3 @@ fi
 
 # install the binaries
 eval "$cmd_install"
-
