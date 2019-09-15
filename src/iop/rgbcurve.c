@@ -22,6 +22,7 @@
 
 #include "bauhaus/bauhaus.h"
 #include "common/colorspaces_inline_conversions.h"
+#include "common/rgb_norms.h"
 #include "develop/imageop.h"
 #include "develop/imageop_math.h"
 #include "dtgtk/drawingarea.h"
@@ -45,17 +46,6 @@ typedef enum dt_iop_rgbcurve_pickcolor_type_t
   DT_IOP_RGBCURVE_PICK_COLORPICK = 1,
   DT_IOP_RGBCURVE_PICK_SET_VALUES = 2
 } dt_iop_rgbcurve_pickcolor_type_t;
-
-typedef enum dt_iop_rgbcurve_preservecolors_t
-{
-  DT_RGBCURVE_PRESERVE_NONE = 0,
-  DT_RGBCURVE_PRESERVE_LUMINANCE = 1,
-  DT_RGBCURVE_PRESERVE_LMAX = 2,
-  DT_RGBCURVE_PRESERVE_LAVG = 3,
-  DT_RGBCURVE_PRESERVE_LSUM = 4,
-  DT_RGBCURVE_PRESERVE_LNORM = 5,
-  DT_RGBCURVE_PRESERVE_LBP = 6,
-} dt_iop_rgbcurve_preservecolors_t;
 
 typedef enum rgbcurve_channel_t
 {
@@ -631,7 +621,7 @@ static void _iop_color_picker_update(dt_iop_module_t *self)
 {
   dt_iop_rgbcurve_gui_data_t *g = (dt_iop_rgbcurve_gui_data_t *)self->gui_data;
   const int which_colorpicker = g->color_picker.current_picker;
-  const int old_reset = darktable.gui->reset;
+  const int reset = darktable.gui->reset;
   darktable.gui->reset = 1;
 
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(g->colorpicker),
@@ -639,7 +629,7 @@ static void _iop_color_picker_update(dt_iop_module_t *self)
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(g->colorpicker_set_values),
                                which_colorpicker == DT_IOP_RGBCURVE_PICK_SET_VALUES);
 
-  darktable.gui->reset = old_reset;
+  darktable.gui->reset = reset;
   dt_control_queue_redraw_widget(self->widget);
 }
 
@@ -1499,17 +1489,17 @@ void gui_init(struct dt_iop_module_t *self)
                            gtk_label_new(_("  R  ")));
   gtk_widget_set_tooltip_text(
       gtk_notebook_get_tab_label(g->channel_tabs, gtk_notebook_get_nth_page(g->channel_tabs, -1)),
-      _("curve_nodes for r channel"));
+      _("curve nodes for r channel"));
   gtk_notebook_append_page(GTK_NOTEBOOK(g->channel_tabs), GTK_WIDGET(gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0)),
                            gtk_label_new(_("  G  ")));
   gtk_widget_set_tooltip_text(
       gtk_notebook_get_tab_label(g->channel_tabs, gtk_notebook_get_nth_page(g->channel_tabs, -1)),
-      _("curve_nodes for g channel"));
+      _("curve nodes for g channel"));
   gtk_notebook_append_page(GTK_NOTEBOOK(g->channel_tabs), GTK_WIDGET(gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0)),
                            gtk_label_new(_("  B  ")));
   gtk_widget_set_tooltip_text(
       gtk_notebook_get_tab_label(g->channel_tabs, gtk_notebook_get_nth_page(g->channel_tabs, -1)),
-      _("curve_nodes for b channel"));
+      _("curve nodes for b channel"));
 
   gtk_widget_show_all(GTK_WIDGET(gtk_notebook_get_nth_page(g->channel_tabs, g->channel)));
   gtk_notebook_set_current_page(GTK_NOTEBOOK(g->channel_tabs), g->channel);
@@ -1691,7 +1681,7 @@ void init(dt_iop_module_t *module)
     // .curve_type = { CUBIC_SPLINE, CUBIC_SPLINE, CUBIC_SPLINE},
     .curve_autoscale = DT_S_SCALE_AUTOMATIC_RGB, // autoscale
     .compensate_middle_grey = 1,
-    .preserve_colors = DT_RGBCURVE_PRESERVE_LUMINANCE
+    .preserve_colors = DT_RGB_NORM_LUMINANCE
   };
 
   module->histogram_middle_grey = tmp.compensate_middle_grey;
@@ -1820,7 +1810,7 @@ int process_cl(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, cl_m
   const dt_iop_order_iccprofile_info_t *const work_profile = dt_ioppr_get_pipe_work_profile_info(piece->pipe);
 
   dt_iop_rgbcurve_data_t *d = (dt_iop_rgbcurve_data_t *)piece->data;
-  dt_iop_rgbcurve_global_data_t *gd = (dt_iop_rgbcurve_global_data_t *)self->data;
+  dt_iop_rgbcurve_global_data_t *gd = (dt_iop_rgbcurve_global_data_t *)self->global_data;
 
   _generate_curve_lut(piece->pipe, d);
 
@@ -1955,7 +1945,11 @@ void process(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, const 
   const int autoscale = d->params.curve_autoscale;
 
 #ifdef _OPENMP
-#pragma omp parallel for default(none) shared(d) schedule(static)
+#pragma omp parallel for default(none) \
+  dt_omp_firstprivate(autoscale, ch, height, ivoid, ovoid, work_profile, xm_b, \
+                      xm_g, xm_L, width) \
+  shared(d) \
+  schedule(static)
 #endif
   for(int y = 0; y < height; y++)
   {
@@ -1978,7 +1972,7 @@ void process(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, const 
       }
       else if(autoscale == DT_S_SCALE_AUTOMATIC_RGB)
       {
-        if(d->params.preserve_colors == DT_RGBCURVE_PRESERVE_NONE)
+        if(d->params.preserve_colors == DT_RGB_NORM_NONE)
         {
           for(int c = 0; c < 3; c++)
           {
@@ -1989,35 +1983,7 @@ void process(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, const 
         else
         {
           float ratio = 1.f;
-          float lum = 0.0f;
-          if (d->params.preserve_colors == DT_RGBCURVE_PRESERVE_LUMINANCE)
-          {
-            lum = (work_profile) ? dt_ioppr_get_rgb_matrix_luminance(in, work_profile) : dt_camera_rgb_luminance(in);
-          }
-          else if (d->params.preserve_colors == DT_RGBCURVE_PRESERVE_LMAX)
-          {
-            lum = fmaxf(in[0], fmaxf(in[1], in[2]));
-          }
-          else if (d->params.preserve_colors == DT_RGBCURVE_PRESERVE_LAVG)
-          {
-            lum = (in[0] + in[1] + in[2]) / 3.0f;
-          }
-          else if (d->params.preserve_colors == DT_RGBCURVE_PRESERVE_LSUM)
-          {
-            lum = in[0] + in[1] + in[2];
-          }
-          else if (d->params.preserve_colors == DT_RGBCURVE_PRESERVE_LNORM)
-          {
-            lum = powf(in[0] * in[0] + in[1] * in[1] + in[2] * in[2], 0.5f);
-          }
-          else if (d->params.preserve_colors == DT_RGBCURVE_PRESERVE_LBP)
-          {
-            float R, G, B;
-            R = in[0] * in[0];
-            G = in[1] * in[1];
-            B = in[2] * in[2];
-            lum = (in[0] * R + in[1] * G + in[2] * B) / (R + G + B);
-          }
+          const float lum = dt_rgb_norm(in, d->params.preserve_colors, work_profile);
           if(lum > 0.f)
           {
             const float curve_lum = (lum < xm_L)

@@ -311,7 +311,9 @@ static void process_floyd_steinberg(struct dt_iop_module_t *self, dt_dev_pixelpi
   }
 
 #ifdef _OPENMP
-#pragma omp parallel for default(none) schedule(static)
+#pragma omp parallel for default(none) \
+  dt_omp_firstprivate(ch, height, ivoid, ovoid, width) \
+  schedule(static)
 #endif
   for(int j = 0; j < height; j++)
   {
@@ -476,7 +478,9 @@ static void process_floyd_steinberg_sse2(struct dt_iop_module_t *self, dt_dev_pi
   }
 
 #ifdef _OPENMP
-#pragma omp parallel for default(none) schedule(static)
+#pragma omp parallel for default(none) \
+  dt_omp_firstprivate(ch, height, ivoid, ovoid, width) \
+  schedule(static)
 #endif
   for(int j = 0; j < height; j++)
   {
@@ -584,7 +588,7 @@ static void encrypt_tea(unsigned int *arg)
 
 static float tpdf(unsigned int urandom)
 {
-  float frandom = (float)urandom / 0xFFFFFFFFu;
+  float frandom = (float)urandom / (float)0xFFFFFFFFu;
 
   return (frandom < 0.5f ? (sqrtf(2.0f * frandom) - 1.0f) : (1.0f - sqrtf(2.0f * (1.0f - frandom))));
 }
@@ -605,7 +609,9 @@ static void process_random(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t 
   unsigned int *const tea_states = calloc(2 * dt_get_num_threads(), sizeof(unsigned int));
 
 #ifdef _OPENMP
-#pragma omp parallel for default(none) schedule(static)
+#pragma omp parallel for default(none) \
+  dt_omp_firstprivate(ch, dither, height, ivoid, ovoid, tea_states, width) \
+  schedule(static)
 #endif
   for(int j = 0; j < height; j++)
   {

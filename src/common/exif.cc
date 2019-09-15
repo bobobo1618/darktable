@@ -70,6 +70,8 @@ extern "C" {
 #include "develop/masks.h"
 }
 
+#include "external/adobe_coeff.c"
+
 // exiv2's readMetadata is not thread safe in 0.26. so we lock it. since readMetadata might throw an exception we
 // wrap it into some c++ magic to make sure we unlock in all cases. well, actually not magic but basic raii.
 // FIXME: check again once we rely on 0.27
@@ -434,7 +436,7 @@ static bool dt_exif_read_iptc_data(dt_image_t *img, Exiv2::IptcData &iptcData)
         char *tag = dt_util_foo_to_utf8(str.c_str());
         guint tagid = 0;
         dt_tag_new(tag, &tagid);
-        dt_tag_attach(tagid, img->id);
+        dt_tag_attach_from_gui(tagid, img->id);
         g_free(tag);
         ++pos;
       }
@@ -470,6 +472,44 @@ static bool dt_exif_read_iptc_data(dt_image_t *img, Exiv2::IptcData &iptcData)
   }
 }
 
+// Support DefaultUserCrop, what is the safe exif tag?
+// Magic-nr taken from dng specs, the specs also say it has 4 floats (top,left,bottom,right
+// We only take them if a) we find a value != the default *and* b) data are plausible
+static bool dt_check_usercrop(Exiv2::ExifData &exifData, dt_image_t *img)
+{
+  Exiv2::ExifData::const_iterator pos = exifData.findKey(Exiv2::ExifKey("Exif.SubImage1.0xc7b5"));
+  if(pos != exifData.end() && pos->count() == 4 && pos->size())
+  {
+    float crop[4];
+    for(int i = 0; i < 4; i++) crop[i] = pos->toFloat(i);
+    if (((crop[0]>0)||(crop[1]>0)||(crop[2]<1)||(crop[3]<1))&&(crop[2]-crop[0]>0.05f)&&(crop[3]-crop[1]>0.05f))
+    {
+      for (int i=0; i<4; i++) img->usercrop[i] = crop[i];
+      return TRUE;
+    }
+  }
+  return FALSE;
+}
+
+void dt_img_check_usercrop(dt_image_t *img, const char *filename)
+{
+  try
+  {
+    std::unique_ptr<Exiv2::Image> image(Exiv2::ImageFactory::open(WIDEN(filename)));
+    assert(image.get() != 0);
+    read_metadata_threadsafe(image);
+    Exiv2::ExifData &exifData = image->exifData();
+    if(!exifData.empty()) dt_check_usercrop(exifData, img);
+    return;
+  }
+  catch(Exiv2::AnyError &e)
+  {
+    std::string s(e.what());
+    std::cerr << "[exiv2] reading DefaultUserCrop" << filename << ": " << s << std::endl;
+    return;
+  }
+}
+
 static bool dt_exif_read_exif_tag(Exiv2::ExifData &exifData, Exiv2::ExifData::const_iterator *pos, string key)
 {
   try
@@ -499,6 +539,19 @@ static void _find_datetime_taken(Exiv2::ExifData &exifData, Exiv2::ExifData::con
   else
   {
     *exif_datetime_taken = '\0';
+  }
+}
+
+static void mat3mul(float *dst, const float *const m1, const float *const m2)
+{
+  for(int k = 0; k < 3; k++)
+  {
+    for(int i = 0; i < 3; i++)
+    {
+      float x = 0.0f;
+      for(int j = 0; j < 3; j++) x += m1[3 * k + j] * m2[3 * j + i];
+      dst[3 * k + i] = x;
+    }
   }
 }
 
@@ -617,6 +670,18 @@ static bool dt_exif_read_exif_data(dt_image_t *img, Exiv2::ExifData &exifData)
         img->exif_crop = 1.0f;
     }
 
+    if (dt_check_usercrop(exifData, img))
+      {
+        img->flags |= DT_IMAGE_HAS_USERCROP;
+        guint tagid = 0;
+        char tagname[64];
+        snprintf(tagname, sizeof(tagname), "darktable|mode|exif-crop");
+        dt_tag_new(tagname, &tagid);
+        dt_tag_attach(tagid, img->id);
+      }
+    /*
+     * Get the focus distance in meters.
+     */
     if(FIND_EXIF_TAG("Exif.NikonLd2.FocusDistance"))
     {
       float value = pos->toFloat();
@@ -677,7 +742,21 @@ static bool dt_exif_read_exif_data(dt_image_t *img, Exiv2::ExifData &exifData)
     {
       img->exif_focus_distance = pos->toFloat();
     }
-    /** read image orientation */
+    else if(Exiv2::testVersion(0,27,2) && FIND_EXIF_TAG("Exif.Sony2Fp.FocusPosition2"))
+    {
+      const float focus_position = pos->toFloat();
+
+      if (FIND_EXIF_TAG("Exif.Photo.FocalLengthIn35mmFilm")) {
+          const float focal_length_35mm = pos->toFloat();
+
+          /* http://u88.n24.queensu.ca/exiftool/forum/index.php/topic,3688.msg29653.html#msg29653 */
+          img->exif_focus_distance = (pow(2, focus_position / 16 - 5) + 1) * focal_length_35mm / 1000;
+      }
+    }
+
+    /*
+     * Read image orientation
+     */
     if(FIND_EXIF_TAG("Exif.Image.Orientation"))
     {
       img->orientation = dt_image_orientation_to_flip_bits(pos->toLong());
@@ -691,7 +770,7 @@ static bool dt_exif_read_exif_data(dt_image_t *img, Exiv2::ExifData &exifData)
     if(FIND_EXIF_TAG("Exif.GPSInfo.GPSLatitude"))
     {
       Exiv2::ExifData::const_iterator ref = exifData.findKey(Exiv2::ExifKey("Exif.GPSInfo.GPSLatitudeRef"));
-      if(ref != exifData.end() && ref->size())
+      if(ref != exifData.end() && ref->size() && pos->count() == 3)
       {
         std::string sign_str = ref->toString();
         const char *sign = sign_str.c_str();
@@ -706,7 +785,7 @@ static bool dt_exif_read_exif_data(dt_image_t *img, Exiv2::ExifData &exifData)
     if(FIND_EXIF_TAG("Exif.GPSInfo.GPSLongitude"))
     {
       Exiv2::ExifData::const_iterator ref = exifData.findKey(Exiv2::ExifKey("Exif.GPSInfo.GPSLongitudeRef"));
-      if(ref != exifData.end() && ref->size())
+      if(ref != exifData.end() && ref->size() && pos->count() == 3)
       {
         std::string sign_str = ref->toString();
         const char *sign = sign_str.c_str();
@@ -850,28 +929,90 @@ static bool dt_exif_read_exif_data(dt_image_t *img, Exiv2::ExifData &exifData)
 
     // read embedded color matrix as used in DNGs
     {
-      int is_1_65 = -1, is_2_65 = -1; // -1: not found, 0: some random type, 1: D65
-      if(FIND_EXIF_TAG("Exif.Image.CalibrationIlluminant1"))
-      {
-        is_1_65 = (pos->toLong() == 21) ? 1 : 0;
-      }
-      if(FIND_EXIF_TAG("Exif.Image.CalibrationIlluminant2"))
-      {
-        is_2_65 = (pos->toLong() == 21) ? 1 : 0;
-      }
+      int illu1 = -1, illu2 = -1, illu = -1; // -1: not found, otherwise the detected CalibrationIlluminant
+      float colmatrix[12];
+      img->d65_color_matrix[0] = NAN; // make sure for later testing
+      // The correction matrices are taken from
+      // http://www.brucelindbloom.com - chromatic Adaption.
+      // using Bradford method: found Illuminant -> D65
+      const float correctmat[6][9] = {
+        { 0.9555766, -0.0230393, 0.0631636, -0.0282895, 1.0099416, 0.0210077, 0.0122982, -0.0204830,
+          1.3299098 }, // 23 = D50
+        { 0.9726856, -0.0135482, 0.0361731, -0.0167463, 1.0049102, 0.0120598, 0.0070026, -0.0116372,
+          1.1869548 }, // 20 = D55
+        { 1.0206905, 0.0091588, -0.0228796, 0.0115005, 0.9984917, -0.0076762, -0.0043619, 0.0072053,
+          0.8853432 }, // 22 = D75
+        { 0.8446965, -0.1179225, 0.3948108, -0.1366303, 1.1041226, 0.1291718, 0.0798489, -0.1348999,
+          3.1924009 }, // 17 = Standard light A
+        { 0.9415037, -0.0321240, 0.0584672, -0.0428238, 1.0250998, 0.0203309, 0.0101511, -0.0161170,
+          1.2847354 }, // 18 = Standard light B
+        { 0.9904476, -0.0071683, -0.0116156, -0.0123712, 1.0155950, -0.0029282, -0.0035635, 0.0067697,
+          0.9181569 } // 19 = Standard light C
+      };
 
-      // use the d65 (type == 21) matrix if we found it, otherwise use whatever we got
+      if(FIND_EXIF_TAG("Exif.Image.CalibrationIlluminant1")) illu1 = pos->toLong();
+      if(FIND_EXIF_TAG("Exif.Image.CalibrationIlluminant2")) illu2 = pos->toLong();
       Exiv2::ExifData::const_iterator cm1_pos = exifData.findKey(Exiv2::ExifKey("Exif.Image.ColorMatrix1"));
       Exiv2::ExifData::const_iterator cm2_pos = exifData.findKey(Exiv2::ExifKey("Exif.Image.ColorMatrix2"));
-      if(is_1_65 == 1 && cm1_pos != exifData.end() && cm1_pos->count() == 9 && cm1_pos->size())
-        for(int i = 0; i < 9; i++) img->d65_color_matrix[i] = cm1_pos->toFloat(i);
-      else if(is_2_65 == 1 && cm2_pos != exifData.end() && cm2_pos->count() == 9 && cm2_pos->size())
-        for(int i = 0; i < 9; i++) img->d65_color_matrix[i] = cm2_pos->toFloat(i);
-      else if(cm1_pos != exifData.end() && cm1_pos->count() == 9 && cm1_pos->size())
-        for(int i = 0; i < 9; i++) img->d65_color_matrix[i] = cm1_pos->toFloat(i);
-      else if(cm2_pos != exifData.end() && cm2_pos->count() == 9 && cm2_pos->size())
-        for(int i = 0; i < 9; i++) img->d65_color_matrix[i] = cm2_pos->toFloat(i);
+
+      // Which is the wanted colormatrix?
+      // If we have D65 in Illuminant1 we use it; otherwise we prefer Illuminant2 because it's the higher
+      // color temperature and thus closer to D65
+      if(illu1 == 21 && cm1_pos != exifData.end() && cm1_pos->count() == 9 && cm1_pos->size())
+      {
+        for(int i = 0; i < 9; i++) colmatrix[i] = cm1_pos->toFloat(i);
+        illu = illu1;
+      }
+      else if(illu2 != -1 && cm2_pos != exifData.end() && cm2_pos->count() == 9 && cm2_pos->size())
+      {
+        for(int i = 0; i < 9; i++) colmatrix[i] = cm2_pos->toFloat(i);
+        illu = illu2;
+      }
+      else if(illu1 != -1 && cm1_pos != exifData.end() && cm1_pos->count() == 9 && cm1_pos->size())
+      {
+        for(int i = 0; i < 9; i++) colmatrix[i] = cm1_pos->toFloat(i);
+        illu = illu1;
     }
+      // Take the found CalibrationIlluminant / ColorMatrix pair.
+      // If it is D65: just copy otherwise multiply by the specific correction matrix.
+      if(illu != -1)
+      {
+       // If no supported Illuminant is found it's better NOT to use the found matrix.
+       // The colorin module will write an error message and use a fallback matrix
+       // instead of showing wrong colors.
+       switch(illu)
+        {
+          case 21:
+            for(int i = 0; i < 9; i++) img->d65_color_matrix[i] = colmatrix[i];
+            break;
+          case 23:
+            mat3mul(img->d65_color_matrix, correctmat[0], colmatrix);
+            break;
+          case 20:
+            mat3mul(img->d65_color_matrix, correctmat[1], colmatrix);
+            break;
+          case 22:
+            mat3mul(img->d65_color_matrix, correctmat[2], colmatrix);
+            break;
+          case 17:
+            mat3mul(img->d65_color_matrix, correctmat[3], colmatrix);
+            break;
+          case 18:
+            mat3mul(img->d65_color_matrix, correctmat[4], colmatrix);
+            break;
+          case 19:
+            mat3mul(img->d65_color_matrix, correctmat[5], colmatrix);
+            break;
+        }
+        // Maybe there is a predefined camera matrix in adobe_coeff?
+        // This is tested to possibly override the matrix.
+        colmatrix[0] = NAN;
+        dt_dcraw_adobe_coeff(img->camera_model, (float(*)[12])colmatrix);
+        if(!isnan(colmatrix[0]))
+          for(int i = 0; i < 9; i++) img->d65_color_matrix[i] = colmatrix[i];
+      }
+    }
+
 
     // some files have the colorspace explicitly set. try to read that.
     // is_ldr -> none
@@ -2035,11 +2176,18 @@ static GHashTable *read_masks(Exiv2::XmpData &xmpData, const char *filename, con
     && (mask_id = xmpData.findKey(Exiv2::XmpKey("Xmp.darktable.mask_id"))) != xmpData.end()
     && (mask_nb = xmpData.findKey(Exiv2::XmpKey("Xmp.darktable.mask_nb"))) != xmpData.end())
   {
-    const int cnt = mask->count();
-    if(cnt == mask_src->count() && cnt == mask_name->count() && cnt == mask_type->count()
-      && cnt == mask_version->count() && cnt == mask_id->count() && cnt == mask_nb->count())
+    // fixes API change happened after exiv2 v0.27.2.1
+    const size_t cnt = (size_t)mask->count();
+    const size_t mask_src_cnt = (size_t)mask_src->count();
+    const size_t mask_name_cnt = (size_t)mask_name->count();
+    const size_t mask_type_cnt = (size_t)mask_type->count();
+    const size_t mask_version_cnt = (size_t)mask_version->count();
+    const size_t mask_id_cnt = (size_t)mask_id->count();
+    const size_t mask_nb_cnt = (size_t)mask_nb->count();
+    if(cnt == mask_src_cnt && cnt == mask_name_cnt && cnt == mask_type_cnt
+       && cnt == mask_version_cnt && cnt == mask_id_cnt && cnt == mask_nb_cnt)
     {
-      for(int i = 0; i < cnt; i++)
+      for(size_t i = 0; i < cnt; i++)
       {
         mask_entry_t *entry = (mask_entry_t *)calloc(1, sizeof(mask_entry_t));
 
@@ -2367,14 +2515,14 @@ int dt_exif_xmp_read(dt_image_t *img, const char *filename, const int history_on
           dt_image_raw_parameters_t out;
       } raw_params;
       raw_params.in = pos->toLong();
-      int32_t user_flip = raw_params.out.user_flip;
+      const int32_t user_flip = raw_params.out.user_flip;
       img->legacy_flip.user_flip = user_flip;
       img->legacy_flip.legacy = 0;
     }
 
     if((pos = xmpData.findKey(Exiv2::XmpKey("Xmp.darktable.auto_presets_applied"))) != xmpData.end())
     {
-      int32_t i = pos->toLong();
+      const int32_t i = pos->toLong();
       // set or clear bit in image struct
       if(i == 1) img->flags |= DT_IMAGE_AUTO_PRESETS_APPLIED;
       if(i == 0) img->flags &= ~DT_IMAGE_AUTO_PRESETS_APPLIED;
@@ -2949,6 +3097,293 @@ static void dt_exif_xmp_read_data(Exiv2::XmpData &xmpData, const int imgid)
   g_list_free_full(hierarchical, g_free);
 }
 
+// helper to create an xmp data thing. throws exiv2 exceptions if stuff goes wrong.
+static void dt_exif_xmp_read_data_export(Exiv2::XmpData &xmpData, const int imgid)
+{
+  const int xmp_version = 3;
+  int stars = 1, raw_params = 0, history_end = -1;
+  int iop_order_version = 0;
+  double longitude = NAN, latitude = NAN, altitude = NAN;
+  gchar *filename = NULL;
+  gchar *datetime_taken = NULL;
+
+  // get stars and raw params from db
+  sqlite3_stmt *stmt;
+  DT_DEBUG_SQLITE3_PREPARE_V2(dt_database_get(darktable.db), "SELECT filename, flags, raw_parameters, "
+                                                             "longitude, latitude, altitude, history_end, iop_order_version, datetime_taken "
+                                                             "FROM main.images WHERE id = ?1",
+                              -1, &stmt, NULL);
+  DT_DEBUG_SQLITE3_BIND_INT(stmt, 1, imgid);
+  if(sqlite3_step(stmt) == SQLITE_ROW)
+  {
+    filename = (gchar *)sqlite3_column_text(stmt, 0);
+    stars = sqlite3_column_int(stmt, 1);
+    raw_params = sqlite3_column_int(stmt, 2);
+    if(sqlite3_column_type(stmt, 3) == SQLITE_FLOAT) longitude = sqlite3_column_double(stmt, 3);
+    if(sqlite3_column_type(stmt, 4) == SQLITE_FLOAT) latitude = sqlite3_column_double(stmt, 4);
+    if(sqlite3_column_type(stmt, 5) == SQLITE_FLOAT) altitude = sqlite3_column_double(stmt, 5);
+    history_end = sqlite3_column_int(stmt, 6);
+    iop_order_version = sqlite3_column_int(stmt, 7);
+    datetime_taken = (gchar *)sqlite3_column_text(stmt, 8);
+  }
+
+  // Store datetime_taken as DateTimeOriginal to take into account the user's selected date/time
+  xmpData["Xmp.exif.DateTimeOriginal"] = datetime_taken;
+
+  // We have to erase the old ratings first as exiv2 seems to not change it otherwise.
+  Exiv2::XmpData::iterator pos = xmpData.findKey(Exiv2::XmpKey("Xmp.xmp.Rating"));
+  if(pos != xmpData.end()) xmpData.erase(pos);
+  xmpData["Xmp.xmp.Rating"] = ((stars & 0x7) == 6) ? -1 : (stars & 0x7); // rejected image = -1, others = 0..5
+
+  // The original file name
+  if(filename) xmpData["Xmp.xmpMM.DerivedFrom"] = filename;
+
+  // GPS data
+  if(!std::isnan(longitude) && !std::isnan(latitude))
+  {
+    char long_dir = 'E', lat_dir = 'N';
+    if(longitude < 0) long_dir = 'W';
+    if(latitude < 0) lat_dir = 'S';
+
+    longitude = fabs(longitude);
+    latitude = fabs(latitude);
+
+    const int long_deg = (int)floor(longitude);
+    const int lat_deg = (int)floor(latitude);
+    const double long_min = (longitude - (double)long_deg) * 60.0;
+    const double lat_min = (latitude - (double)lat_deg) * 60.0;
+
+    char *str = (char *)g_malloc(G_ASCII_DTOSTR_BUF_SIZE);
+
+    g_ascii_formatd(str, G_ASCII_DTOSTR_BUF_SIZE, "%08f", long_min);
+    gchar *long_str = g_strdup_printf("%d,%s%c", long_deg, str, long_dir);
+    g_ascii_formatd(str, G_ASCII_DTOSTR_BUF_SIZE, "%08f", lat_min);
+    gchar *lat_str = g_strdup_printf("%d,%s%c", lat_deg, str, lat_dir);
+
+    xmpData["Xmp.exif.GPSVersionID"] = "2.2.0.0";
+    xmpData["Xmp.exif.GPSLongitude"] = long_str;
+    xmpData["Xmp.exif.GPSLatitude"] = lat_str;
+    g_free(long_str);
+    g_free(lat_str);
+    g_free(str);
+  }
+  if(!std::isnan(altitude))
+  {
+    xmpData["Xmp.exif.GPSAltitudeRef"] = (altitude < 0) ? "1" : "0";
+
+    long ele_dm = (int)floor(fabs(10.0 * altitude));
+    gchar *ele_str = g_strdup_printf("%ld/10", ele_dm);
+    xmpData["Xmp.exif.GPSAltitude"] = ele_str;
+    g_free(ele_str);
+  }
+  sqlite3_finalize(stmt);
+
+  // the meta data
+  DT_DEBUG_SQLITE3_PREPARE_V2(dt_database_get(darktable.db), "SELECT key, value FROM main.meta_data WHERE id = ?1",
+                              -1, &stmt, NULL);
+  DT_DEBUG_SQLITE3_BIND_INT(stmt, 1, imgid);
+  while(sqlite3_step(stmt) == SQLITE_ROW)
+  {
+    int key = sqlite3_column_int(stmt, 0);
+    switch(key)
+    {
+      case DT_METADATA_XMP_DC_CREATOR:
+        xmpData["Xmp.dc.creator"] = sqlite3_column_text(stmt, 1);
+        break;
+      case DT_METADATA_XMP_DC_PUBLISHER:
+        xmpData["Xmp.dc.publisher"] = sqlite3_column_text(stmt, 1);
+        break;
+      case DT_METADATA_XMP_DC_TITLE:
+        xmpData["Xmp.dc.title"] = sqlite3_column_text(stmt, 1);
+        break;
+      case DT_METADATA_XMP_DC_DESCRIPTION:
+        xmpData["Xmp.dc.description"] = sqlite3_column_text(stmt, 1);
+        break;
+      case DT_METADATA_XMP_DC_RIGHTS:
+        xmpData["Xmp.dc.rights"] = sqlite3_column_text(stmt, 1);
+        break;
+    }
+  }
+  sqlite3_finalize(stmt);
+
+  xmpData["Xmp.darktable.xmp_version"] = xmp_version;
+  xmpData["Xmp.darktable.raw_params"] = raw_params;
+
+  if(stars & DT_IMAGE_AUTO_PRESETS_APPLIED)
+    xmpData["Xmp.darktable.auto_presets_applied"] = 1;
+  else
+    xmpData["Xmp.darktable.auto_presets_applied"] = 0;
+
+  // get tags from db, store in dublin core
+  std::unique_ptr<Exiv2::Value> v1(Exiv2::Value::create(Exiv2::xmpSeq)); // or xmpBag or xmpAlt.
+
+  std::unique_ptr<Exiv2::Value> v2(Exiv2::Value::create(Exiv2::xmpSeq)); // or xmpBag or xmpAlt.
+
+  GList *tags = dt_tag_get_list_export(imgid);
+  while(tags)
+  {
+    v1->read((char *)tags->data);
+    tags = g_list_next(tags);
+  }
+
+  GList *hierarchical = dt_tag_get_hierarchical_export(imgid);
+  while(hierarchical)
+  {
+    v2->read((char *)hierarchical->data);
+    hierarchical = g_list_next(hierarchical);
+  }
+
+  if(v1->count() > 0) xmpData.add(Exiv2::XmpKey("Xmp.dc.subject"), v1.get());
+  if(v2->count() > 0) xmpData.add(Exiv2::XmpKey("Xmp.lr.hierarchicalSubject"), v2.get());
+  /* TODO: Add tags to IPTC namespace as well */
+
+  // color labels
+  char val[2048];
+  std::unique_ptr<Exiv2::Value> v(Exiv2::Value::create(Exiv2::xmpSeq)); // or xmpBag or xmpAlt.
+
+  /* Already initialized v = Exiv2::Value::create(Exiv2::xmpSeq); // or xmpBag or xmpAlt.*/
+  DT_DEBUG_SQLITE3_PREPARE_V2(dt_database_get(darktable.db), "SELECT color FROM main.color_labels WHERE imgid=?1",
+                              -1, &stmt, NULL);
+  DT_DEBUG_SQLITE3_BIND_INT(stmt, 1, imgid);
+  while(sqlite3_step(stmt) == SQLITE_ROW)
+  {
+    snprintf(val, sizeof(val), "%d", sqlite3_column_int(stmt, 0));
+    v->read(val);
+  }
+  sqlite3_finalize(stmt);
+  if(v->count() > 0) xmpData.add(Exiv2::XmpKey("Xmp.darktable.colorlabels"), v.get());
+
+  // masks:
+  char key[1024];
+  int num = 1;
+
+  // masks history:
+  num = 1;
+
+  // create an array:
+  Exiv2::XmpTextValue tvm("");
+  tvm.setXmpArrayType(Exiv2::XmpValue::xaSeq);
+  xmpData.add(Exiv2::XmpKey("Xmp.darktable.masks_history"), &tvm);
+
+  DT_DEBUG_SQLITE3_PREPARE_V2(
+      dt_database_get(darktable.db),
+      "SELECT imgid, formid, form, name, version, points, points_count, source, num FROM main.masks_history WHERE imgid = ?1 ORDER BY num",
+      -1, &stmt, NULL);
+  DT_DEBUG_SQLITE3_BIND_INT(stmt, 1, imgid);
+  while(sqlite3_step(stmt) == SQLITE_ROW)
+  {
+    const int32_t mask_num = sqlite3_column_int(stmt, 8);
+    const int32_t mask_id = sqlite3_column_int(stmt, 1);
+    const int32_t mask_type = sqlite3_column_int(stmt, 2);
+    const char *mask_name = (const char *)sqlite3_column_text(stmt, 3);
+    const int32_t mask_version = sqlite3_column_int(stmt, 4);
+    int32_t len = sqlite3_column_bytes(stmt, 5);
+    char *mask_d = dt_exif_xmp_encode((const unsigned char *)sqlite3_column_blob(stmt, 5), len, NULL);
+    const int32_t mask_nb = sqlite3_column_int(stmt, 6);
+    len = sqlite3_column_bytes(stmt, 7);
+    char *mask_src = dt_exif_xmp_encode((const unsigned char *)sqlite3_column_blob(stmt, 7), len, NULL);
+
+    snprintf(key, sizeof(key), "Xmp.darktable.masks_history[%d]/darktable:mask_num", num);
+    xmpData[key] = mask_num;
+    snprintf(key, sizeof(key), "Xmp.darktable.masks_history[%d]/darktable:mask_id", num);
+    xmpData[key] = mask_id;
+    snprintf(key, sizeof(key), "Xmp.darktable.masks_history[%d]/darktable:mask_type", num);
+    xmpData[key] = mask_type;
+    snprintf(key, sizeof(key), "Xmp.darktable.masks_history[%d]/darktable:mask_name", num);
+    xmpData[key] = mask_name;
+    snprintf(key, sizeof(key), "Xmp.darktable.masks_history[%d]/darktable:mask_version", num);
+    xmpData[key] = mask_version;
+    snprintf(key, sizeof(key), "Xmp.darktable.masks_history[%d]/darktable:mask_points", num);
+    xmpData[key] = mask_d;
+    snprintf(key, sizeof(key), "Xmp.darktable.masks_history[%d]/darktable:mask_nb", num);
+    xmpData[key] = mask_nb;
+    snprintf(key, sizeof(key), "Xmp.darktable.masks_history[%d]/darktable:mask_src", num);
+    xmpData[key] = mask_src;
+
+    free(mask_d);
+    free(mask_src);
+
+    num++;
+  }
+  sqlite3_finalize(stmt);
+
+
+  // history stack:
+  num = 1;
+
+  // create an array:
+  Exiv2::XmpTextValue tv("");
+  tv.setXmpArrayType(Exiv2::XmpValue::xaSeq);
+  xmpData.add(Exiv2::XmpKey("Xmp.darktable.history"), &tv);
+
+  DT_DEBUG_SQLITE3_PREPARE_V2(
+      dt_database_get(darktable.db),
+      "SELECT module, operation, op_params, enabled, blendop_params, "
+      "blendop_version, multi_priority, multi_name, num, iop_order FROM main.history WHERE imgid = ?1 ORDER BY num",
+      -1, &stmt, NULL);
+  DT_DEBUG_SQLITE3_BIND_INT(stmt, 1, imgid);
+  while(sqlite3_step(stmt) == SQLITE_ROW)
+  {
+    int32_t modversion = sqlite3_column_int(stmt, 0);
+    const char *operation = (const char *)sqlite3_column_text(stmt, 1);
+    int32_t params_len = sqlite3_column_bytes(stmt, 2);
+    const void *params_blob = sqlite3_column_blob(stmt, 2);
+    int32_t enabled = sqlite3_column_int(stmt, 3);
+    const void *blendop_blob = sqlite3_column_blob(stmt, 4);
+    int32_t blendop_params_len = sqlite3_column_bytes(stmt, 4);
+    int32_t blendop_version = sqlite3_column_int(stmt, 5);
+    int32_t multi_priority = sqlite3_column_int(stmt, 6);
+    const char *multi_name = (const char *)sqlite3_column_text(stmt, 7);
+    int32_t hist_num = sqlite3_column_int(stmt, 8);
+    double iop_order = sqlite3_column_double(stmt, 9);
+
+    if(!operation) continue; // no op is fatal.
+
+    char *params = dt_exif_xmp_encode((const unsigned char *)params_blob, params_len, NULL);
+
+    snprintf(key, sizeof(key), "Xmp.darktable.history[%d]/darktable:num", num);
+    xmpData[key] = hist_num;
+    snprintf(key, sizeof(key), "Xmp.darktable.history[%d]/darktable:operation", num);
+    xmpData[key] = operation;
+    snprintf(key, sizeof(key), "Xmp.darktable.history[%d]/darktable:enabled", num);
+    xmpData[key] = enabled;
+    snprintf(key, sizeof(key), "Xmp.darktable.history[%d]/darktable:modversion", num);
+    xmpData[key] = modversion;
+    snprintf(key, sizeof(key), "Xmp.darktable.history[%d]/darktable:params", num);
+    xmpData[key] = params;
+    snprintf(key, sizeof(key), "Xmp.darktable.history[%d]/darktable:multi_name", num);
+    xmpData[key] = multi_name ? multi_name : "";
+    snprintf(key, sizeof(key), "Xmp.darktable.history[%d]/darktable:multi_priority", num);
+    xmpData[key] = multi_priority;
+    snprintf(key, sizeof(key), "Xmp.darktable.history[%d]/darktable:iop_order", num);
+    xmpData[key] = iop_order;
+    if(blendop_blob)
+    {
+      // this shouldn't fail in general, but reading is robust enough to allow it,
+      // and flipping images from LT will result in this being left out
+      char *blendop_params = dt_exif_xmp_encode((const unsigned char *)blendop_blob, blendop_params_len, NULL);
+      snprintf(key, sizeof(key), "Xmp.darktable.history[%d]/darktable:blendop_version", num);
+      xmpData[key] = blendop_version;
+      snprintf(key, sizeof(key), "Xmp.darktable.history[%d]/darktable:blendop_params", num);
+      xmpData[key] = blendop_params;
+      free(blendop_params);
+    }
+
+    free(params);
+
+    num++;
+  }
+
+  if(history_end == -1) history_end = num - 1;
+  else history_end = MIN(history_end, num - 1); // safeguard for some old buggy libraries
+  xmpData["Xmp.darktable.history_end"] = history_end;
+  xmpData["Xmp.darktable.iop_order_version"] = iop_order_version;
+
+  sqlite3_finalize(stmt);
+  g_list_free_full(tags, g_free);
+  g_list_free_full(hierarchical, g_free);
+}
+
 #if EXIV2_VERSION >= EXIV2_MAKE_VERSION(0,27,0)
 #define ERROR_CODE(a) (static_cast<Exiv2::ErrorCode>((a)))
 #else
@@ -3015,7 +3450,7 @@ char *dt_exif_xmp_read_string(const int imgid)
   }
 }
 
-int dt_exif_xmp_attach(const int imgid, const char *filename)
+int dt_exif_xmp_attach_export(const int imgid, const char *filename)
 {
   try
   {
@@ -3077,7 +3512,7 @@ int dt_exif_xmp_attach(const int imgid, const char *filename)
 
     // last but not least attach what we have in DB to the XMP. in theory that should be
     // the same as what we just copied over from the sidecar file, but you never know ...
-    dt_exif_xmp_read_data(xmpData, imgid);
+    dt_exif_xmp_read_data_export(xmpData, imgid);
 
     img->writeMetadata();
     return 0;

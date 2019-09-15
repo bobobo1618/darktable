@@ -76,6 +76,7 @@ FILE(GLOB SOURCE_FILES
   "common/usermanual_url.c"
   "common/iop_group.c"
   "common/iop_order.c"
+  "control/conf.c"
   "control/control.c"
   "control/crawler.c"
   "control/jobs.c"
@@ -228,8 +229,6 @@ list(APPEND LIBS "${CMAKE_THREAD_LIBS_INIT}")
 # Need to explicitly link against math library.
 list(APPEND LIBS "-lm")
 
-# Check for openmp
-find_package(OpenMP)
 if(USE_OPENMP)
   if(OpenMP_C_FLAGS)
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")

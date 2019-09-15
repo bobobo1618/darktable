@@ -42,6 +42,7 @@
 #endif
 #include "bauhaus/bauhaus.h"
 #include "common/cpuid.h"
+#include "common/file_location.h"
 #include "common/film.h"
 #include "common/grealpath.h"
 #include "common/image.h"
@@ -435,6 +436,7 @@ int dt_init(int argc, char *argv[], const gboolean init_gui, const gboolean load
   dt_pthread_mutex_init(&(darktable.plugin_threadsafe), NULL);
   dt_pthread_mutex_init(&(darktable.capabilities_threadsafe), NULL);
   dt_pthread_mutex_init(&(darktable.exiv2_threadsafe), NULL);
+  dt_pthread_mutex_init(&(darktable.readFile_mutex), NULL);
   darktable.control = (dt_control_t *)calloc(1, sizeof(dt_control_t));
 
   // database
@@ -803,7 +805,7 @@ int dt_init(int argc, char *argv[], const gboolean init_gui, const gboolean load
   darktable.color_profiles = dt_colorspaces_init();
 
   // initialize the database
-  darktable.db = dt_database_init(dbfilename_from_command, load_data);
+  darktable.db = dt_database_init(dbfilename_from_command, load_data, init_gui);
   if(darktable.db == NULL)
   {
     printf("ERROR : cannot open database\n");
@@ -811,36 +813,38 @@ int dt_init(int argc, char *argv[], const gboolean init_gui, const gboolean load
   }
   else if(!dt_database_get_lock_acquired(darktable.db))
   {
-    gboolean image_loaded_elsewhere = FALSE;
-#ifndef MAC_INTEGRATION
-    // send the images to the other instance via dbus
-    fprintf(stderr, "trying to open the images in the running instance\n");
-
-    GDBusConnection *connection = NULL;
-    for(int i = 1; i < argc; i++)
+    if (init_gui)
     {
-      // make the filename absolute ...
-      if(argv[i] == NULL || *argv[i] == '\0') continue;
-      gchar *filename = dt_util_normalize_path(argv[i]);
-      if(filename == NULL) continue;
-      if(!connection) connection = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
-      // ... and send it to the running instance of darktable
-      image_loaded_elsewhere = g_dbus_connection_call_sync(connection, "org.darktable.service", "/darktable",
-                                                           "org.darktable.service.Remote", "Open",
-                                                           g_variant_new("(s)", filename), NULL,
-                                                           G_DBUS_CALL_FLAGS_NONE, -1, NULL, NULL) != NULL;
-      g_free(filename);
-    }
-    if(connection) g_object_unref(connection);
+      gboolean image_loaded_elsewhere = FALSE;
+#ifndef MAC_INTEGRATION
+      // send the images to the other instance via dbus
+      fprintf(stderr, "trying to open the images in the running instance\n");
+
+      GDBusConnection *connection = NULL;
+      for(int i = 1; i < argc; i++)
+      {
+        // make the filename absolute ...
+        if(argv[i] == NULL || *argv[i] == '\0') continue;
+        gchar *filename = dt_util_normalize_path(argv[i]);
+        if(filename == NULL) continue;
+        if(!connection) connection = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
+        // ... and send it to the running instance of darktable
+        image_loaded_elsewhere = g_dbus_connection_call_sync(connection, "org.darktable.service", "/darktable",
+                                                             "org.darktable.service.Remote", "Open",
+                                                             g_variant_new("(s)", filename), NULL,
+                                                             G_DBUS_CALL_FLAGS_NONE, -1, NULL, NULL) != NULL;
+        g_free(filename);
+      }
+      if(connection) g_object_unref(connection);
 #endif
 
-    if(!image_loaded_elsewhere) dt_database_show_error(darktable.db);
-
+      if(!image_loaded_elsewhere) dt_database_show_error(darktable.db);
+    }
     return 1;
   }
 
   dt_ioppr_check_db_integrity();
-  
+
   // Initialize the signal system
   darktable.signals = dt_control_signal_init();
 
@@ -1130,6 +1134,7 @@ void dt_cleanup()
   dt_pthread_mutex_destroy(&(darktable.plugin_threadsafe));
   dt_pthread_mutex_destroy(&(darktable.capabilities_threadsafe));
   dt_pthread_mutex_destroy(&(darktable.exiv2_threadsafe));
+  dt_pthread_mutex_destroy(&(darktable.readFile_mutex));
 
   dt_exif_cleanup();
 }
@@ -1279,7 +1284,7 @@ void dt_configure_performance()
   // store the current performance configure version as the last completed
   // that would prevent further execution of previous performance configuration run
   // at subsequent startups
-  dt_conf_set_int("performance_configuration_version_completed", DT_CURRENT_PERFORMANCE_CONFIGURE_VERSION);  
+  dt_conf_set_int("performance_configuration_version_completed", DT_CURRENT_PERFORMANCE_CONFIGURE_VERSION);
 }
 
 

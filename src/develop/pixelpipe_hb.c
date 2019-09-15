@@ -156,11 +156,21 @@ int dt_dev_pixelpipe_init_cached(dt_dev_pixelpipe_t *pipe, size_t size, int32_t 
   if(!dt_dev_pixelpipe_cache_init(&(pipe->cache), entries, pipe->backbuf_size)) return 0;
   pipe->cache_obsolete = 0;
   pipe->backbuf = NULL;
+  pipe->backbuf_scale = 0.f;
+  pipe->backbuf_zoom_x = 0.f;
+  pipe->backbuf_zoom_y = 0.f;
+
+  pipe->output_backbuf = NULL;
+  pipe->output_backbuf_width = 0;
+  pipe->output_backbuf_height = 0;
+  pipe->output_imgid = 0;
+
   pipe->processing = 0;
   pipe->shutdown = 0;
   pipe->opencl_error = 0;
   pipe->tiling = 0;
   pipe->mask_display = DT_DEV_PIXELPIPE_DISPLAY_NONE;
+  pipe->bypass_blendif = 0;
   pipe->input_timestamp = 0;
   pipe->levels = IMAGEIO_RGB | IMAGEIO_INT8;
   dt_pthread_mutex_init(&(pipe->backbuf_mutex), NULL);
@@ -210,6 +220,12 @@ void dt_dev_pixelpipe_cleanup(dt_dev_pixelpipe_t *pipe)
   pipe->icc_type = DT_COLORSPACE_NONE;
   g_free(pipe->icc_filename);
   pipe->icc_filename = NULL;
+
+  g_free(pipe->output_backbuf);
+  pipe->output_backbuf = NULL;
+  pipe->output_backbuf_width = 0;
+  pipe->output_backbuf_height = 0;
+  pipe->output_imgid = 0;
 
   if(pipe->forms)
   {
@@ -952,6 +968,9 @@ static void _pixelpipe_final_histogram(dt_develop_t *dev, const float *const inp
                                             profile_info_to, "final histogram");
   }
 
+  dt_times_t start_time = { 0 };
+  if(darktable.unmuted & DT_DEBUG_PERF) dt_get_times(&start_time);
+
   dev->histogram_max = 0;
   memset(dev->histogram, 0, sizeof(uint32_t) * 4 * 256);
 
@@ -964,10 +983,20 @@ static void _pixelpipe_final_histogram(dt_develop_t *dev, const float *const inp
   dev->histogram_max = MAX(MAX(histogram_max[0], histogram_max[1]), histogram_max[2]);
 
   if(img_tmp) dt_free_align(img_tmp);
+
+  if(darktable.unmuted & DT_DEBUG_PERF)
+  {
+    dt_times_t end_time = { 0 };
+    dt_get_times(&end_time);
+    fprintf(stderr, "final histogram took %.3f secs (%.3f CPU)\n", end_time.clock - start_time.clock, end_time.user - start_time.user);
+  }
 }
 
 static void _pixelpipe_final_histogram_waveform(dt_develop_t *dev, const float *const input, const dt_iop_roi_t *roi_in)
 {
+  dt_times_t start_time = { 0 };
+  if(darktable.unmuted & DT_DEBUG_PERF) dt_get_times(&start_time);
+
   uint32_t *buf = (uint32_t *)calloc(dev->histogram_waveform_height * dev->histogram_waveform_width * 3,
                                      sizeof(uint32_t));
   memset(dev->histogram_waveform, 0,
@@ -1033,6 +1062,13 @@ static void _pixelpipe_final_histogram_waveform(dt_develop_t *dev, const float *
   }
 
   free(buf);
+
+  if(darktable.unmuted & DT_DEBUG_PERF)
+  {
+    dt_times_t end_time = { 0 };
+    dt_get_times(&end_time);
+    fprintf(stderr, "final histogram waveform took %.3f secs (%.3f CPU)\n", end_time.clock - start_time.clock, end_time.user - start_time.user);
+  }
 }
 
 // returns 1 if blend process need the module default colorspace
@@ -1088,8 +1124,15 @@ static int dt_dev_pixelpipe_process_rec(dt_dev_pixelpipe_t *pipe, dt_develop_t *
     dt_pthread_mutex_unlock(&pipe->busy_mutex);
     return 1;
   }
-  uint64_t hash = dt_dev_pixelpipe_cache_hash(pipe->image.id, roi_out, pipe, pos);
-  if(dt_dev_pixelpipe_cache_available(&(pipe->cache), hash))
+  int cache_available = 0;
+  uint64_t hash = 0;
+  // do not get gamma from cache on preview pipe so we can compute the final histogram
+  if(pipe->type != DT_DEV_PIXELPIPE_PREVIEW || module == NULL || strcmp(module->op, "gamma") != 0)
+  {
+    hash = dt_dev_pixelpipe_cache_hash(pipe->image.id, roi_out, pipe, pos);
+    cache_available = dt_dev_pixelpipe_cache_available(&(pipe->cache), hash);
+  }
+  if(cache_available)
   {
     // if(module) printf("found valid buf pos %d in cache for module %s %s %lu\n", pos, module->op, pipe ==
     // dev->preview_pipe ? "[preview]" : "", hash);
@@ -1148,7 +1191,10 @@ static int dt_dev_pixelpipe_process_rec(dt_dev_pixelpipe_t *pipe, dt_develop_t *
           const int cp_height = MIN(roi_out->height, pipe->iheight - in_y);
 
 #ifdef _OPENMP
-#pragma omp parallel for schedule(static) default(none) shared(pipe, roi_out, roi_in, output)
+#pragma omp parallel for default(none) \
+          dt_omp_firstprivate(bpp, cp_height, cp_width, in_x, in_y) \
+          shared(pipe, roi_out, roi_in, output) \
+          schedule(static)
 #endif
           for(int j = 0; j < cp_height; j++)
             memcpy(((char *)*output) + (size_t)bpp * j * roi_out->width,
@@ -1217,7 +1263,12 @@ static int dt_dev_pixelpipe_process_rec(dt_dev_pixelpipe_t *pipe, dt_develop_t *
       return 1;
     }
 
-    if(!strcmp(module->op, "gamma"))
+    gboolean important = FALSE;
+    if(pipe->type == DT_DEV_PIXELPIPE_PREVIEW)
+      important = (strcmp(module->op, "colorout") == 0);
+    else
+      important = (strcmp(module->op, "gamma") == 0);
+    if(important)
       (void)dt_dev_pixelpipe_cache_get_important(&(pipe->cache), hash, bufsize, output, out_format);
     else
       (void)dt_dev_pixelpipe_cache_get(&(pipe->cache), hash, bufsize, output, out_format);
@@ -1253,7 +1304,10 @@ static int dt_dev_pixelpipe_process_rec(dt_dev_pixelpipe_t *pipe, dt_develop_t *
       else
       {
 #ifdef _OPENMP
-#pragma omp parallel for schedule(static) default(none) shared(roi_out, roi_in, output, input)
+#pragma omp parallel for default(none) \
+        dt_omp_firstprivate(in_bpp, out_bpp) \
+        shared(roi_out, roi_in, output, input) \
+        schedule(static)
 #endif
         for(int j = 0; j < roi_out->height; j++)
             memcpy(((char *)*output) + (size_t)out_bpp * j * roi_out->width,
@@ -1262,7 +1316,10 @@ static int dt_dev_pixelpipe_process_rec(dt_dev_pixelpipe_t *pipe, dt_develop_t *
       }
 #else // don't HAVE_OPENCL
 #ifdef _OPENMP
-#pragma omp parallel for schedule(static) default(none) shared(roi_out, roi_in, output, input)
+#pragma omp parallel for default(none) \
+      dt_omp_firstprivate(in_bpp, out_bpp) \
+      shared(roi_out, roi_in, output, input) \
+      schedule(static)
 #endif
       for(int j = 0; j < roi_out->height; j++)
             memcpy(((char *)*output) + (size_t)out_bpp * j * roi_out->width,
@@ -2484,32 +2541,17 @@ post_process_collect_info:
       // this HAS to be done on the float input data, otherwise we get really ugly artifacts due to rounding
       // issues when putting colors into the bins.
       //       dt_pthread_mutex_lock(&dev->histogram_waveform_mutex);
-      if(dev->histogram_waveform_width != 0 && input)
+      if(dev->histogram_waveform_width != 0 && input && dev->histogram_type == DT_DEV_HISTOGRAM_WAVEFORM)
       {
         _pixelpipe_final_histogram_waveform(dev, (const float *const )input, &roi_in);
       }
       //       dt_pthread_mutex_unlock(&dev->histogram_waveform_mutex);
 
       dt_pthread_mutex_unlock(&pipe->busy_mutex);
-
-      /* raise preview pipe finished signal */
-      dt_control_signal_raise(darktable.signals, DT_SIGNAL_DEVELOP_PREVIEW_PIPE_FINISHED);
-    }
-    else if(dev->gui_attached && !dev->gui_leaving && pipe == dev->preview2_pipe
-            && (strcmp(module->op, "gamma") == 0))
-    {
-      dt_pthread_mutex_unlock(&pipe->busy_mutex);
-
-      /* raise preview2 pipe finished signal */
-      dt_control_signal_raise(darktable.signals, DT_SIGNAL_DEVELOP_PREVIEW2_PIPE_FINISHED);
     }
     else
     {
       dt_pthread_mutex_unlock(&pipe->busy_mutex);
-
-      /* if gui attached, lets raise pipe finish signal */
-      if(dev->gui_attached && !dev->gui_leaving && strcmp(module->op, "gamma") == 0)
-        dt_control_signal_raise(darktable.signals, DT_SIGNAL_DEVELOP_UI_PIPE_FINISHED);
     }
   }
 
@@ -2652,6 +2694,8 @@ restart:
 
   // mask display off as a starting point
   pipe->mask_display = DT_DEV_PIXELPIPE_DISPLAY_NONE;
+  // and blendif active
+  pipe->bypass_blendif = 0;
 
   void *buf = NULL;
   void *cl_mem_out = NULL;
@@ -2725,6 +2769,23 @@ restart:
   pipe->backbuf = buf;
   pipe->backbuf_width = width;
   pipe->backbuf_height = height;
+
+  if(pipe->type == DT_DEV_PIXELPIPE_PREVIEW ||
+    pipe->type == DT_DEV_PIXELPIPE_FULL ||
+    pipe->type == DT_DEV_PIXELPIPE_PREVIEW2)
+  {
+    if(pipe->output_backbuf == NULL || pipe->output_backbuf_width != pipe->backbuf_width || pipe->output_backbuf_height != pipe->backbuf_height)
+    {
+      g_free(pipe->output_backbuf);
+      pipe->output_backbuf_width = pipe->backbuf_width;
+      pipe->output_backbuf_height = pipe->backbuf_height;
+      pipe->output_backbuf = g_malloc0((size_t)pipe->output_backbuf_width * pipe->output_backbuf_height * 4 * sizeof(uint8_t));
+    }
+
+    if(pipe->output_backbuf)
+      memcpy(pipe->output_backbuf, pipe->backbuf, (size_t)pipe->output_backbuf_width * pipe->output_backbuf_height * 4 * sizeof(uint8_t));
+    pipe->output_imgid = pipe->image.id;
+  }
   dt_pthread_mutex_unlock(&pipe->backbuf_mutex);
 
   // printf("pixelpipe homebrew process end\n");

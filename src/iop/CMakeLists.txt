@@ -125,6 +125,7 @@ add_iop(borders "borders.c")
 add_iop(nlmeans "nlmeans.c")
 add_iop(colorcontrast "colorcontrast.c")
 add_iop(levels "levels.c" DEFAULT_VISIBLE)
+add_iop(rgblevels "rgblevels.c" DEFAULT_VISIBLE)
 add_iop(colorize "colorize.c")
 add_iop(invert "invert.c")
 add_iop(vibrance "vibrance.c")
@@ -145,7 +146,7 @@ if(RSVG2_FOUND)
 endif(RSVG2_FOUND)
 
 if(LENSFUN_FOUND)
-  add_iop(lens "lens.c" DEFAULT_VISIBLE)
+  add_iop(lens "lens.cc" DEFAULT_VISIBLE)
 endif(LENSFUN_FOUND)
 
 # fix for Mac when OpenMP is only available in C compiler

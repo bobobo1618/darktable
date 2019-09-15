@@ -235,7 +235,7 @@ int process_cl(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, cl_m
                const dt_iop_roi_t *const roi_in, const dt_iop_roi_t *const roi_out)
 {
   dt_iop_profilegamma_data_t *d = (dt_iop_profilegamma_data_t *)piece->data;
-  dt_iop_profilegamma_global_data_t *gd = (dt_iop_profilegamma_global_data_t *)self->data;
+  dt_iop_profilegamma_global_data_t *gd = (dt_iop_profilegamma_global_data_t *)self->global_data;
 
   cl_int err = -999;
   const int devid = piece->pipe->devid;
@@ -336,7 +336,10 @@ void process(dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, const void *c
       const float noise = powf(2.0f, -16.0f);
 
 #ifdef _OPENMP
-#pragma omp parallel for SIMD() default(none) shared(data) schedule(static)
+#pragma omp parallel for SIMD() default(none) \
+      dt_omp_firstprivate(ch, grey, ivoid, ovoid, roi_out, noise) \
+      shared(data) \
+      schedule(static)
 #endif
       for(size_t k = 0; k < (size_t)ch * roi_out->width * roi_out->height; k++)
       {
@@ -359,7 +362,10 @@ void process(dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, const void *c
     case PROFILEGAMMA_GAMMA:
     {
 #ifdef _OPENMP
-#pragma omp parallel for default(none) shared(data) schedule(static)
+#pragma omp parallel for default(none) \
+      dt_omp_firstprivate(ch, ivoid, ovoid, roi_out) \
+      shared(data) \
+      schedule(static)
 #endif
       for(int k = 0; k < roi_out->height; k++)
       {
@@ -395,9 +401,10 @@ static void apply_auto_grey(dt_iop_module_t *self)
   float grey = fmax(fmax(self->picked_color[0], self->picked_color[1]), self->picked_color[2]);
   p->grey_point = 100.f * grey;
 
+  const int reset = darktable.gui->reset;
   darktable.gui->reset = 1;
   dt_bauhaus_slider_set(g->grey_point, p->grey_point);
-  darktable.gui->reset = 0;
+  darktable.gui->reset = reset;
 
   dt_dev_add_history_item(darktable.develop, self, TRUE);
 }
@@ -417,9 +424,10 @@ static void apply_auto_black(dt_iop_module_t *self)
 
   p->shadows_range = EVmin;
 
+  const int reset = darktable.gui->reset;
   darktable.gui->reset = 1;
   dt_bauhaus_slider_set(g->shadows_range, p->shadows_range);
-  darktable.gui->reset = 0;
+  darktable.gui->reset = reset;
 
   dt_dev_add_history_item(darktable.develop, self, TRUE);
 }
@@ -442,9 +450,10 @@ static void apply_auto_dynamic_range(dt_iop_module_t *self)
 
   p->dynamic_range = EVmax - EVmin;
 
+  const int reset = darktable.gui->reset;
   darktable.gui->reset = 1;
   dt_bauhaus_slider_set(g->dynamic_range, p->dynamic_range);
-  darktable.gui->reset = 0;
+  darktable.gui->reset = reset;
 
   dt_dev_add_history_item(darktable.develop, self, TRUE);
 }
@@ -489,10 +498,11 @@ static void security_threshold_callback(GtkWidget *slider, gpointer user_data)
   p->dynamic_range = EVmax - EVmin;
   p->shadows_range = EVmin;
 
+  const int reset = darktable.gui->reset;
   darktable.gui->reset = 1;
   dt_bauhaus_slider_set_soft(g->dynamic_range, p->dynamic_range);
   dt_bauhaus_slider_set_soft(g->shadows_range, p->shadows_range);
-  darktable.gui->reset = 0;
+  darktable.gui->reset = reset;
 
   dt_dev_add_history_item(darktable.develop, self, TRUE);
 }
@@ -521,11 +531,12 @@ static void apply_autotune(dt_iop_module_t *self)
   p->shadows_range = EVmin;
   p->dynamic_range = EVmax - EVmin;
 
+  const int reset = darktable.gui->reset;
   darktable.gui->reset = 1;
   dt_bauhaus_slider_set(g->grey_point, p->grey_point);
   dt_bauhaus_slider_set(g->shadows_range, p->shadows_range);
   dt_bauhaus_slider_set(g->dynamic_range, p->dynamic_range);
-  darktable.gui->reset = 0;
+  darktable.gui->reset = reset;
 
   dt_dev_add_history_item(darktable.develop, self, TRUE);
 }
@@ -680,7 +691,10 @@ void commit_params(dt_iop_module_t *self, dt_iop_params_t *p1, dt_dev_pixelpipe_
     if(linear == 0.0)
     {
 #ifdef _OPENMP
-#pragma omp parallel for default(none) shared(d) schedule(static)
+#pragma omp parallel for default(none) \
+      dt_omp_firstprivate(gamma) \
+      shared(d) \
+      schedule(static)
 #endif
       for(int k = 0; k < 0x10000; k++) d->table[k] = powf(1.00 * k / 0x10000, gamma);
     }
@@ -699,7 +713,10 @@ void commit_params(dt_iop_module_t *self, dt_iop_params_t *p1, dt_dev_pixelpipe_
         c = 1.0;
       }
 #ifdef _OPENMP
-#pragma omp parallel for default(none) shared(d, a, b, c, g) schedule(static)
+#pragma omp parallel for default(none) \
+      dt_omp_firstprivate(linear) \
+      shared(d, a, b, c, g) \
+      schedule(static)
 #endif
       for(int k = 0; k < 0x10000; k++)
       {

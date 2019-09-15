@@ -368,7 +368,7 @@ int process_cl(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, cl_m
                const dt_iop_roi_t *const roi_in, const dt_iop_roi_t *const roi_out)
 {
   dt_iop_exposure_data_t *d = (dt_iop_exposure_data_t *)piece->data;
-  dt_iop_exposure_global_data_t *gd = (dt_iop_exposure_global_data_t *)self->data;
+  dt_iop_exposure_global_data_t *gd = (dt_iop_exposure_global_data_t *)self->global_data;
 
   process_common_setup(self, piece);
 
@@ -406,7 +406,9 @@ void process(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, const 
   const int ch = piece->colors;
 
 #ifdef _OPENMP
-#pragma omp parallel for SIMD() default(none) schedule(static)
+#pragma omp parallel for SIMD() default(none) \
+  dt_omp_firstprivate(ch, d, i, o, roi_out) \
+  schedule(static)
 #endif
   for(size_t k = 0; k < (size_t)ch * roi_out->width * roi_out->height; k++)
   {
@@ -431,7 +433,9 @@ void process_sse2(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, c
   const __m128 scalev = _mm_set1_ps(d->scale);
 
 #ifdef _OPENMP
-#pragma omp parallel for default(none) schedule(static)
+#pragma omp parallel for default(none) \
+  dt_omp_firstprivate(blackv, ch, i, o, roi_out, scalev) \
+  schedule(static)
 #endif
   for(int k = 0; k < roi_out->height; k++)
   {
@@ -538,7 +542,10 @@ void gui_focus(struct dt_iop_module_t *self, gboolean in)
   // switch off auto exposure when we lose focus (switching images etc)
   dt_iop_exposure_gui_data_t *g = (dt_iop_exposure_gui_data_t *)self->gui_data;
 
+  const int reset = darktable.gui->reset;
+  darktable.gui->reset = 1;
   dt_bauhaus_slider_set(g->autoexpp, 0.01);
+  darktable.gui->reset = reset;
 }
 
 void init(dt_iop_module_t *module)
@@ -642,9 +649,10 @@ static void exposure_set_white(struct dt_iop_module_t *self, const float white)
 
   dt_iop_exposure_gui_data_t *g = (dt_iop_exposure_gui_data_t *)self->gui_data;
 
+  const int reset = darktable.gui->reset;
   darktable.gui->reset = 1;
   dt_bauhaus_slider_set_soft(g->exposure, p->exposure);
-  darktable.gui->reset = 0;
+  darktable.gui->reset = reset;
   dt_dev_add_history_item(darktable.develop, self, TRUE);
 }
 
@@ -658,9 +666,10 @@ static void dt_iop_exposure_set_exposure(struct dt_iop_module_t *self, const flo
 
     p->deflicker_target_level = exposure;
 
+    const int reset = darktable.gui->reset;
     darktable.gui->reset = 1;
     dt_bauhaus_slider_set(g->deflicker_target_level, p->deflicker_target_level);
-    darktable.gui->reset = 0;
+    darktable.gui->reset = reset;
 
     dt_dev_add_history_item(darktable.develop, self, TRUE);
   }
@@ -699,9 +708,10 @@ static void exposure_set_black(struct dt_iop_module_t *self, const float black)
   }
 
   dt_iop_exposure_gui_data_t *g = (dt_iop_exposure_gui_data_t *)self->gui_data;
+  const int reset = darktable.gui->reset;
   darktable.gui->reset = 1;
   dt_bauhaus_slider_set_soft(g->black, p->black);
-  darktable.gui->reset = 0;
+  darktable.gui->reset = reset;
   dt_dev_add_history_item(darktable.develop, self, TRUE);
 }
 
@@ -795,9 +805,10 @@ static gboolean draw(GtkWidget *widget, cairo_t *cr, dt_iop_module_t *self)
   {
     gchar *str = g_strdup_printf("%.2fEV", g->deflicker_computed_exposure);
 
+    const int reset = darktable.gui->reset;
     darktable.gui->reset = 1;
     gtk_label_set_text(g->deflicker_used_EC, str);
-    darktable.gui->reset = 0;
+    darktable.gui->reset = reset;
 
     g_free(str);
   }

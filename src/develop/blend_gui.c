@@ -609,19 +609,6 @@ static void _blendop_blendif_showmask_clicked(GtkWidget *button, GdkEventButton 
 {
   if(darktable.gui->reset) return;
 
-  // if blendif is bypassed don't allow to set this button on
-  if(module->bypass_blendif)
-  {
-    dt_control_log(_("display mask is currently disabled by another module"));
-
-    if(darktable.gui->reset) return;
-    const int reset = darktable.gui->reset;
-    darktable.gui->reset = 1;
-    dtgtk_button_set_active(DTGTK_BUTTON(button), FALSE);
-    darktable.gui->reset = reset;
-    return;
-  }
-
   if(event->button == 1)
   {
     const int has_mask_display = module->request_mask_display & (DT_DEV_PIXELPIPE_DISPLAY_MASK | DT_DEV_PIXELPIPE_DISPLAY_CHANNEL);
@@ -911,6 +898,7 @@ static int _blendop_masks_show_and_edit(GtkWidget *widget, GdkEventButton *event
 
   if(event->button == 1)
   {
+    const int reset = darktable.gui->reset;
     darktable.gui->reset = 1;
 
     dt_iop_request_focus(self);
@@ -942,7 +930,7 @@ static int _blendop_masks_show_and_edit(GtkWidget *widget, GdkEventButton *event
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(bd->masks_edit), bd->masks_shown != DT_MASKS_EDIT_OFF);
     dt_masks_set_edit_mode(self, bd->masks_shown);
 
-    darktable.gui->reset = 0;
+    darktable.gui->reset = reset;
 
     return TRUE;
   }

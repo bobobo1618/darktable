@@ -136,7 +136,10 @@ void process(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, const 
   dt_Lab_to_XYZ(Lab_sw, XYZ_sw);
 
 #ifdef _OPENMP
-#pragma omp parallel for default(none) schedule(static) shared(d, XYZ_sw)
+#pragma omp parallel for default(none) \
+  dt_omp_firstprivate(ch, i, o, roi_out, threshold, c) \
+  shared(d, XYZ_sw) \
+  schedule(static)
 #endif
   for(size_t k = 0; k < (size_t)roi_out->width * roi_out->height; k++)
   {
@@ -185,7 +188,7 @@ int process_cl(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, cl_m
                const dt_iop_roi_t *const roi_in, const dt_iop_roi_t *const roi_out)
 {
   dt_iop_lowlight_data_t *d = (dt_iop_lowlight_data_t *)piece->data;
-  dt_iop_lowlight_global_data_t *gd = (dt_iop_lowlight_global_data_t *)self->data;
+  dt_iop_lowlight_global_data_t *gd = (dt_iop_lowlight_global_data_t *)self->global_data;
 
   cl_mem dev_m = NULL;
   cl_int err = -999;

@@ -329,11 +329,12 @@ static void _iop_color_picker_update(dt_iop_module_t *self)
 {
   dt_iop_levels_gui_data_t *g = (dt_iop_levels_gui_data_t *)self->gui_data;
   const dt_iop_levels_pick_t which_colorpicker = g->color_picker.current_picker;
+  const int reset = darktable.gui->reset;
   darktable.gui->reset = 1;
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(g->blackpick), which_colorpicker == BLACK);
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(g->greypick), which_colorpicker == GREY);
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(g->whitepick), which_colorpicker == WHITE);
-  darktable.gui->reset = 0;
+  darktable.gui->reset = reset;
 }
 
 /*
@@ -401,7 +402,9 @@ void process(dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, const void *c
   }
 
 #ifdef _OPENMP
-#pragma omp parallel for default(none) schedule(static)
+#pragma omp parallel for default(none) \
+  dt_omp_firstprivate(ch, d, ivoid, ovoid, roi_out) \
+  schedule(static)
 #endif
   for(int k = 0; k < roi_out->height; k++)
   {
@@ -451,7 +454,7 @@ int process_cl(dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, cl_mem dev_
                const dt_iop_roi_t *const roi_in, const dt_iop_roi_t *const roi_out)
 {
   dt_iop_levels_data_t *d = (dt_iop_levels_data_t *)piece->data;
-  dt_iop_levels_global_data_t *gd = (dt_iop_levels_global_data_t *)self->data;
+  dt_iop_levels_global_data_t *gd = (dt_iop_levels_global_data_t *)self->global_data;
 
   if(d->mode == LEVELS_MODE_AUTOMATIC)
   {
@@ -1035,6 +1038,8 @@ static gboolean dt_iop_levels_button_press(GtkWidget *widget, GdkEventButton *ev
   {
     dt_iop_module_t *self = (dt_iop_module_t *)user_data;
 
+    if(darktable.develop->gui_module != self) dt_iop_request_focus(self);
+
     if(event->type == GDK_2BUTTON_PRESS)
     {
       // Reset
@@ -1082,6 +1087,8 @@ static gboolean dt_iop_levels_scroll(GtkWidget *widget, GdkEventScroll *event, g
   {
     return FALSE;
   }
+
+  if(darktable.develop->gui_module != self) dt_iop_request_focus(self);
 
   const float interval = 0.002; // Distance moved for each scroll event
   gdouble delta_y;

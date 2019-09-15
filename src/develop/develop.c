@@ -230,7 +230,7 @@ void dt_dev_process_preview2(dt_develop_t *dev)
   if(!dev->gui_attached) return;
   if(!(dev->second_window.widget && GTK_IS_WIDGET(dev->second_window.widget))) return;
   int err = dt_control_add_job_res(darktable.control, dt_dev_process_preview2_job_create(dev),
-                                   DT_CTL_WORKER_ZOOM_FILL);
+                                   DT_CTL_WORKER_ZOOM_2);
   if(err) fprintf(stderr, "[dev_process_preview2] job queue exceeded!\n");
 }
 
@@ -334,11 +334,12 @@ restart:
   dt_show_times(&start, "[dev_process_preview] pixel pipeline processing");
   dt_dev_average_delay_update(&start, &dev->preview_average_delay);
 
-  // redraw the whole thing, to also update color picker values and histograms etc.
-  if(dev->gui_attached) dt_control_queue_redraw();
+  // if a widget needs to be redraw there's the DT_SIGNAL_*_PIPE_FINISHED signals
   dt_control_log_busy_leave();
   dt_pthread_mutex_unlock(&dev->preview_pipe_mutex);
   dt_mipmap_cache_release(darktable.mipmap_cache, &buf);
+
+  dt_control_signal_raise(darktable.signals, DT_SIGNAL_DEVELOP_PREVIEW_PIPE_FINISHED);
 }
 
 void dt_dev_process_preview2_job(dt_develop_t *dev)
@@ -456,6 +457,10 @@ restart:
       goto restart;
   }
 
+  dev->preview2_pipe->backbuf_scale = scale;
+  dev->preview2_pipe->backbuf_zoom_x = zoom_x;
+  dev->preview2_pipe->backbuf_zoom_y = zoom_y;
+
   dev->preview2_status = DT_DEV_PIXELPIPE_VALID;
 
   dt_show_times(&start, "[dev_process_preview2] pixel pipeline processing");
@@ -464,6 +469,8 @@ restart:
   dt_control_log_busy_leave();
   dt_pthread_mutex_unlock(&dev->preview2_pipe_mutex);
   dt_mipmap_cache_release(darktable.mipmap_cache, &buf);
+
+  dt_control_signal_raise(darktable.signals, DT_SIGNAL_DEVELOP_PREVIEW2_PIPE_FINISHED);
 }
 
 void dt_dev_process_image_job(dt_develop_t *dev)
@@ -590,14 +597,20 @@ restart:
   if(dev->pipe->changed != DT_DEV_PIPE_UNCHANGED) goto restart;
 
   // cool, we got a new image!
+  dev->pipe->backbuf_scale = scale;
+  dev->pipe->backbuf_zoom_x = zoom_x;
+  dev->pipe->backbuf_zoom_y = zoom_y;
+
   dev->image_status = DT_DEV_PIXELPIPE_VALID;
   dev->image_loading = 0;
 
   dt_mipmap_cache_release(darktable.mipmap_cache, &buf);
-  // redraw the whole thing, to also update color picker values and histograms etc.
-  if(dev->gui_attached) dt_control_queue_redraw();
+  // if a widget needs to be redraw there's the DT_SIGNAL_*_PIPE_FINISHED signals
   dt_control_log_busy_leave();
   dt_pthread_mutex_unlock(&dev->pipe_mutex);
+
+  if(dev->gui_attached && !dev->gui_leaving)
+    dt_control_signal_raise(darktable.signals, DT_SIGNAL_DEVELOP_UI_PIPE_FINISHED);
 }
 
 // load the raw and get the new image struct, blocking in gui thread
@@ -786,9 +799,10 @@ static void _dev_add_history_item_ext(dt_develop_t *dev, dt_iop_module_t *module
         {
           if(module->off)
           {
+            const int reset = darktable.gui->reset;
             darktable.gui->reset = 1;
             gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(module->off), module->enabled);
-            darktable.gui->reset = 0;
+            darktable.gui->reset = reset;
           }
         }
       }
@@ -835,9 +849,10 @@ static void _dev_add_history_item_ext(dt_develop_t *dev, dt_iop_module_t *module
         {
           if(module->off)
           {
+            const int reset = darktable.gui->reset;
             darktable.gui->reset = 1;
             gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(module->off), module->enabled);
-            darktable.gui->reset = 0;
+            darktable.gui->reset = reset;
           }
         }
       }
@@ -894,7 +909,7 @@ void dt_dev_add_history_item(dt_develop_t *dev, dt_iop_module_t *module, gboolea
   const int imgid = dev->image_storage.id;
   guint tagid = 0;
   dt_tag_new("darktable|changed", &tagid);
-  dt_tag_attach(tagid, imgid);
+  dt_tag_attach_from_gui(tagid, imgid);
 
   // invalidate buffers and force redraw of darkroom
   dt_dev_invalidate_all(dev);
@@ -1112,6 +1127,7 @@ void dt_dev_pop_history_items_ext(dt_develop_t *dev, int32_t cnt)
 void dt_dev_pop_history_items(dt_develop_t *dev, int32_t cnt)
 {
   dt_pthread_mutex_lock(&dev->history_mutex);
+  const int reset = darktable.gui->reset;
   darktable.gui->reset = 1;
   GList *dev_iop = g_list_copy(dev->iop);
 
@@ -1151,9 +1167,9 @@ void dt_dev_pop_history_items(dt_develop_t *dev, int32_t cnt)
 
   if(!dev_iop_changed)
   {
-  dev->pipe->changed |= DT_DEV_PIPE_SYNCH;
-  dev->preview_pipe->changed |= DT_DEV_PIPE_SYNCH; // again, fixed topology for now.
-  dev->preview2_pipe->changed |= DT_DEV_PIPE_SYNCH; // again, fixed topology for now.
+    dev->pipe->changed |= DT_DEV_PIPE_SYNCH;
+    dev->preview_pipe->changed |= DT_DEV_PIPE_SYNCH; // again, fixed topology for now.
+    dev->preview2_pipe->changed |= DT_DEV_PIPE_SYNCH; // again, fixed topology for now.
   }
   else
   {
@@ -1165,7 +1181,7 @@ void dt_dev_pop_history_items(dt_develop_t *dev, int32_t cnt)
     dev->preview2_pipe->cache_obsolete = 1;
   }
 
-  darktable.gui->reset = 0;
+  darktable.gui->reset = reset;
   dt_dev_invalidate_all(dev);
   dt_pthread_mutex_unlock(&dev->history_mutex);
 
@@ -1220,9 +1236,9 @@ static void auto_apply_presets(dt_develop_t *dev)
   // be extra sure that we don't mess up history in separate threads:
   dt_pthread_mutex_lock(&darktable.db_insert);
 
-  int run = 0;
+  gboolean run = FALSE;
   dt_image_t *image = dt_image_cache_get(darktable.image_cache, imgid, 'w');
-  if(!(image->flags & DT_IMAGE_AUTO_PRESETS_APPLIED)) run = 1;
+  if(!(image->flags & DT_IMAGE_AUTO_PRESETS_APPLIED)) run = TRUE;
 
   // flag was already set? only apply presets once in the lifetime of a history stack.
   // (the flag will be cleared when removing it)
@@ -1269,14 +1285,13 @@ static void auto_apply_presets(dt_develop_t *dev)
   if(sqlite3_step(stmt) == SQLITE_DONE)
   {
     sqlite3_finalize(stmt);
-    int cnt = 0;
     // count what we found:
     DT_DEBUG_SQLITE3_PREPARE_V2(dt_database_get(darktable.db), "SELECT COUNT(*) FROM memory.history", -1,
                                 &stmt, NULL);
     if(sqlite3_step(stmt) == SQLITE_ROW)
     {
       // if there is anything..
-      cnt = sqlite3_column_int(stmt, 0);
+      const int cnt = sqlite3_column_int(stmt, 0);
       sqlite3_finalize(stmt);
 
       // workaround a sqlite3 "feature". The above statement to insert items into memory.history is complex and in
@@ -1528,7 +1543,7 @@ void dt_dev_read_history_ext(dt_develop_t *dev, const int imgid, gboolean no_ima
     }
 
     hist->num = sqlite3_column_int(stmt, 1);
-    int modversion = sqlite3_column_int(stmt, 2);
+    const int modversion = sqlite3_column_int(stmt, 2);
     assert(strcmp((char *)sqlite3_column_text(stmt, 3), hist->module->op) == 0);
     hist->params = malloc(hist->module->params_size);
     hist->blend_params = malloc(sizeof(dt_develop_blend_params_t));
@@ -1540,8 +1555,8 @@ void dt_dev_read_history_ext(dt_develop_t *dev, const int imgid, gboolean no_ima
     if(history_end_current > dev->history_end) hist->module->iop_order = hist->iop_order;
 
     const void *blendop_params = sqlite3_column_blob(stmt, 6);
-    int bl_length = sqlite3_column_bytes(stmt, 6);
-    int blendop_version = sqlite3_column_int(stmt, 7);
+    const int bl_length = sqlite3_column_bytes(stmt, 6);
+    const int blendop_version = sqlite3_column_int(stmt, 7);
 
     if(blendop_params && (blendop_version == dt_develop_blend_version())
        && (bl_length == sizeof(dt_develop_blend_params_t)))
@@ -1609,11 +1624,6 @@ void dt_dev_read_history_ext(dt_develop_t *dev, const int imgid, gboolean no_ima
       hist->enabled = 1;
     }
 
-    // memcpy(hist->module->params, hist->params, hist->module->params_size);
-    // hist->module->enabled = hist->enabled;
-    // printf("[dev read history] img %d number %d for operation %d - %s params %f %f\n",
-    // sqlite3_column_int(stmt, 0), sqlite3_column_int(stmt, 1), instance, hist->module->op, *(float
-    // *)hist->params, *(((float*)hist->params)+1));
     dev->history = g_list_append(dev->history, hist);
     dev->history_end++;
   }

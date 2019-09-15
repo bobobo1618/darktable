@@ -70,6 +70,10 @@ typedef enum
   DT_IMAGE_HAS_WAV = 8192,
   // image is a bayer pattern with 4 colors (e.g., CYGM or RGBE)
   DT_IMAGE_4BAYER = 16384,
+  // image was detected as monochrome
+  DT_IMAGE_MONOCHROME = 32768, 
+  // image has usercrop information
+  DT_IMAGE_HAS_USERCROP = 65536,
 } dt_image_flags_t;
 
 typedef enum dt_image_colorspace_t
@@ -183,6 +187,9 @@ typedef struct dt_image_t
 
   /* White balance coeffs from the raw */
   float wb_coeffs[4];
+
+  /* DefaultUserCrop */
+  float usercrop[4];
   /* convenience pointer back into the image cache, so we can return dt_image_t* there directly. */
   struct dt_cache_entry_t *cache_entry;
 } dt_image_t;
@@ -248,6 +255,8 @@ int dt_image_altered(const uint32_t imgid);
 double dt_image_set_aspect_ratio(const int32_t imgid);
 /** set the image final/cropped aspect ratio */
 void dt_image_set_aspect_ratio_to(const int32_t imgid, double aspect_ratio);
+/** reset the image final/cropped aspect ratio to 0.0 */
+void dt_image_reset_aspect_ratio(const int32_t imgid);
 /** returns the orientation bits of the image from exif. */
 static inline dt_image_orientation_t dt_image_orientation(const dt_image_t *img)
 {

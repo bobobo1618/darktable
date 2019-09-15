@@ -20,6 +20,7 @@
 #include "common/database.h"
 #include "common/darktable.h"
 #include "common/debug.h"
+#include "common/file_location.h"
 #include "common/iop_order.h"
 #include "control/conf.h"
 #include "control/control.h"
@@ -39,7 +40,7 @@
 // whenever _create_*_schema() gets changed you HAVE to bump this version and add an update path to
 // _upgrade_*_schema_step()!
 #define CURRENT_DATABASE_VERSION_LIBRARY 19
-#define CURRENT_DATABASE_VERSION_DATA 2
+#define CURRENT_DATABASE_VERSION_DATA 3
 
 typedef struct dt_database_t
 {
@@ -1107,23 +1108,6 @@ static int _upgrade_library_schema_step(dt_database_t *db, int version)
     }
     sqlite3_finalize(sel_stmt);
 
-    // do the same as for history
-    TRY_EXEC("UPDATE data.style_items SET iop_order = ((("
-        "SELECT MAX(multi_priority) FROM data.style_items style1 WHERE style1.styleid = data.style_items.styleid AND style1.operation = data.style_items.operation "
-             ") + 1. - multi_priority) / 1000.) + "
-             "IFNULL((SELECT iop_order FROM iop_order_tmp WHERE iop_order_tmp.operation = "
-             "data.style_items.operation), -999999.) ",
-             "[init] can't update iop_order in style_items table\n");
-
-    TRY_PREPARE(sel_stmt, "SELECT DISTINCT operation FROM data.style_items WHERE iop_order <= 0 OR iop_order IS NULL",
-                "[init] can't prepare selecting style_items iop_order\n");
-    while(sqlite3_step(sel_stmt) == SQLITE_ROW)
-    {
-      const char *op_name = (const char *)sqlite3_column_text(sel_stmt, 0);
-      printf("operation %s with no iop_order while upgrading style_items in database\n", op_name);
-    }
-    sqlite3_finalize(sel_stmt);
-
     TRY_EXEC("DROP TABLE iop_order_tmp", "[init] can't drop table `iop_order_tmp' from database\n");
 
     sqlite3_exec(db->handle, "COMMIT", NULL, NULL, NULL);
@@ -1192,7 +1176,80 @@ static int _upgrade_data_schema_step(dt_database_t *db, int version)
     //    TRY_EXEC("ALTER TABLE data.style_items ADD COLUMN iop_order REAL",
     //             "[init] can't add `iop_order' column to style_items table in database\n");
     sqlite3_exec(db->handle, "ALTER TABLE data.style_items ADD COLUMN iop_order REAL", NULL, NULL, NULL);
+
+    sqlite3_stmt *sel_stmt = NULL;
+    int iop_order_version = 1;
+    GList *prior_v1 = dt_ioppr_get_iop_order_list(&iop_order_version);
+
+    // create a temp table with the previous priorities
+    TRY_EXEC("CREATE TEMPORARY TABLE iop_order_tmp (iop_order REAL, operation VARCHAR(256))",
+             "[init] can't create temporary table for updating `data.style_items'\n");
+
+    // fill temp table with all operations up to this release
+    // it will be used to create the pipe and update the iop_order on history
+    GList *priorities = g_list_first(prior_v1);
+    while(priorities)
+    {
+      dt_iop_order_entry_t *prior = (dt_iop_order_entry_t *)priorities->data;
+
+      sqlite3_prepare_v2(
+          db->handle,
+          "INSERT INTO iop_order_tmp (iop_order, operation) VALUES (?1, ?2)",
+          -1, &stmt, NULL);
+      sqlite3_bind_double(stmt, 1, prior->iop_order);
+      sqlite3_bind_text(stmt, 2, prior->operation, -1, SQLITE_TRANSIENT);
+      TRY_STEP(stmt, SQLITE_DONE, "[init] can't insert default value in iop_order_tmp\n");
+      sqlite3_finalize(stmt);
+
+      priorities = g_list_next(priorities);
+    }
+    g_list_free_full(prior_v1, free);
+
+    // do the same as for history
+    TRY_EXEC("UPDATE data.style_items SET iop_order = ((("
+        "SELECT MAX(multi_priority) FROM data.style_items style1 WHERE style1.styleid = data.style_items.styleid AND style1.operation = data.style_items.operation "
+             ") + 1. - multi_priority) / 1000.) + "
+             "IFNULL((SELECT iop_order FROM iop_order_tmp WHERE iop_order_tmp.operation = "
+             "data.style_items.operation), -999999.) ",
+             "[init] can't update iop_order in style_items table\n");
+
+    TRY_PREPARE(sel_stmt, "SELECT DISTINCT operation FROM data.style_items WHERE iop_order <= 0 OR iop_order IS NULL",
+                "[init] can't prepare selecting style_items iop_order\n");
+    while(sqlite3_step(sel_stmt) == SQLITE_ROW)
+    {
+      const char *op_name = (const char *)sqlite3_column_text(sel_stmt, 0);
+      printf("operation %s with no iop_order while upgrading style_items in database\n", op_name);
+    }
+    sqlite3_finalize(sel_stmt);
+
+    TRY_EXEC("DROP TABLE iop_order_tmp", "[init] can't drop table `iop_order_tmp' from database\n");
+
     new_version = 2;
+  }
+  else if(version == 2)
+  {
+    //    With sqlite above or equal to 3.25.0 RENAME COLUMN can be used instead of the following code
+    //    TRY_EXEC("ALTER TABLE data.tags RENAME COLUMN description TO synonyms;",
+    //             "[init] can't change tags column name from description to synonyms\n");
+
+    TRY_EXEC("ALTER TABLE data.tags RENAME TO tmp_tags",  "[init] can't rename table tags\n");
+
+    TRY_EXEC("CREATE TABLE data.tags (id INTEGER PRIMARY KEY, name VARCHAR, "
+             "synonyms VARCHAR, flags INTEGER)",
+             "[init] can't create new tags table\n");
+
+    TRY_EXEC("INSERT INTO data.tags (id, name, synonyms, flags) SELECT id, name, description, flags "
+             "FROM tmp_tags",
+             "[init] can't populate tags table from tmp_tags\n");
+
+    TRY_EXEC("DROP TABLE tmp_tags", "[init] can't delete table tmp_tags\n");
+
+    TRY_EXEC("CREATE UNIQUE INDEX data.tags_name_idx ON tags (name)",
+             "[init] can't create tags_name_idx on tags table\n");
+
+    sqlite3_exec(db->handle, "COMMIT", NULL, NULL, NULL);
+
+    new_version = 3;
   }
   else
     new_version = version; // should be the fallback so that calling code sees that we are in an infinite loop
@@ -1335,8 +1392,8 @@ static void _create_data_schema(dt_database_t *db)
   sqlite3_step(stmt);
   sqlite3_finalize(stmt);
   ////////////////////////////// tags
-  sqlite3_exec(db->handle, "CREATE TABLE data.tags (id INTEGER PRIMARY KEY, name VARCHAR, icon BLOB, "
-                           "description VARCHAR, flags INTEGER)", NULL, NULL, NULL);
+  sqlite3_exec(db->handle, "CREATE TABLE data.tags (id INTEGER PRIMARY KEY, name VARCHAR, "
+                           "synonyms VARCHAR, flags INTEGER)", NULL, NULL, NULL);
   sqlite3_exec(db->handle, "CREATE UNIQUE INDEX data.tags_name_idx ON tags (name)", NULL, NULL, NULL);
   ////////////////////////////// styles
   sqlite3_exec(db->handle, "CREATE TABLE data.styles (id INTEGER, name VARCHAR, description VARCHAR)",
@@ -1378,6 +1435,7 @@ static void _create_memory_schema(dt_database_t *db)
                            "(tmpid INTEGER PRIMARY KEY, id INTEGER UNIQUE ON CONFLICT IGNORE, count INTEGER)",
                NULL, NULL, NULL);
   sqlite3_exec(db->handle, "CREATE TABLE memory.similar_tags (tagid INTEGER)", NULL, NULL, NULL);
+  sqlite3_exec(db->handle, "CREATE TABLE memory.darktable_tags (tagid INTEGER)", NULL, NULL, NULL);
   sqlite3_exec(
       db->handle,
       "CREATE TABLE memory.history (imgid INTEGER, num INTEGER, module INTEGER, "
@@ -1702,10 +1760,10 @@ static gboolean _lock_databases(dt_database_t *db)
   return TRUE;
 }
 
-void ask_for_upgrade(const gchar *dbname)
+void ask_for_upgrade(const gchar *dbname, const gboolean has_gui)
 {
   // if there's no gui just leave
-  if(darktable.gui == NULL)
+  if(!has_gui)
   {
     fprintf(stderr, "[init] database `%s' is out-of-date. aborting.\n", dbname);
     exit(1);
@@ -1730,7 +1788,7 @@ void ask_for_upgrade(const gchar *dbname)
   if(!shall_we_update_the_db) exit(1);
 }
 
-dt_database_t *dt_database_init(const char *alternative, const gboolean load_data)
+dt_database_t *dt_database_init(const char *alternative, const gboolean load_data, const gboolean has_gui)
 {
   /*  set the threading mode to Serialized */
   sqlite3_config(SQLITE_CONFIG_SERIALIZED);
@@ -1868,7 +1926,7 @@ start:
       sqlite3_finalize(stmt);
       if(db_version < CURRENT_DATABASE_VERSION_DATA)
       {
-        ask_for_upgrade(dbfilename_data);
+        ask_for_upgrade(dbfilename_data, has_gui);
 
         // older: upgrade
         if(!_upgrade_data_schema(db, db_version))
@@ -1946,7 +2004,7 @@ start:
     sqlite3_finalize(stmt);
     if(db_version < CURRENT_DATABASE_VERSION_LIBRARY)
     {
-      ask_for_upgrade(dbfilename_library);
+      ask_for_upgrade(dbfilename_library, has_gui);
 
       // older: upgrade
       if(!_upgrade_library_schema(db, db_version))

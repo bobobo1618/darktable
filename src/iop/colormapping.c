@@ -337,7 +337,10 @@ static void kmeans(const float *col, const int width, const int height, const in
     for(int k = 0; k < n; k++) cnt[k] = 0;
 // randomly sample col positions inside roi
 #ifdef _OPENMP
-#pragma omp parallel for default(none) schedule(static) shared(col, mean_out)
+#pragma omp parallel for default(none) \
+    dt_omp_firstprivate(cnt, height, mean, n, samples, var, width) \
+    shared(col, mean_out) \
+    schedule(static)
 #endif
     for(int s = 0; s < samples; s++)
     {
@@ -497,7 +500,10 @@ void process(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, const 
 
 // first get delta L of equalized L minus original image L, scaled to fit into [0 .. 100]
 #ifdef _OPENMP
-#pragma omp parallel for default(none) schedule(static) shared(data, in, out, equalization)
+#pragma omp parallel for default(none) \
+    dt_omp_firstprivate(ch, height, width) \
+    shared(data, in, out, equalization) \
+    schedule(static)
 #endif
     for(int k = 0; k < height; k++)
     {
@@ -532,7 +538,10 @@ void process(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, const 
     float *const weight_buf = malloc(data->n * dt_get_num_threads() * sizeof(float));
 
 #ifdef _OPENMP
-#pragma omp parallel for default(none) schedule(static) shared(data, in, out, equalization)
+#pragma omp parallel for default(none) \
+    dt_omp_firstprivate(ch, height, mapio, var_ratio, weight_buf, width) \
+    shared(data, in, out, equalization) \
+    schedule(static)
 #endif
     for(int k = 0; k < height; k++)
     {
@@ -578,7 +587,7 @@ int process_cl(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, cl_m
                const dt_iop_roi_t *const roi_in, const dt_iop_roi_t *const roi_out)
 {
   dt_iop_colormapping_data_t *data = (dt_iop_colormapping_data_t *)piece->data;
-  dt_iop_colormapping_global_data_t *gd = (dt_iop_colormapping_global_data_t *)self->data;
+  dt_iop_colormapping_global_data_t *gd = (dt_iop_colormapping_global_data_t *)self->global_data;
   dt_iop_colormapping_gui_data_t *g = (dt_iop_colormapping_gui_data_t *)self->gui_data;
 
   cl_int err = -999;
@@ -903,8 +912,12 @@ void cleanup_global(dt_iop_module_so_t *module)
 
 void reload_defaults(dt_iop_module_t *module)
 {
-  dt_iop_colormapping_params_t tmp
-      = (dt_iop_colormapping_params_t){ .flag = NEUTRAL, .n = 3, .dominance = 100.0f, .equalization = 50.0f };
+  dt_iop_colormapping_params_t *tmp = (dt_iop_colormapping_params_t *)malloc(sizeof(dt_iop_colormapping_params_t));
+
+  tmp->flag = NEUTRAL;
+  tmp->n = 3;
+  tmp->dominance = 100.f;
+  tmp->equalization = 50.0f;
 
   // we might be called from presets update infrastructure => there is no image
   if(!module->dev) goto end;
@@ -912,18 +925,19 @@ void reload_defaults(dt_iop_module_t *module)
   dt_iop_colormapping_gui_data_t *g = (dt_iop_colormapping_gui_data_t *)module->gui_data;
   if(module->dev->gui_attached && g && g->flowback_set)
   {
-    memcpy(tmp.source_ihist, g->flowback.hist, sizeof(float) * HISTN);
-    memcpy(tmp.source_mean, g->flowback.mean, sizeof(float) * MAXN * 2);
-    memcpy(tmp.source_var, g->flowback.var, sizeof(float) * MAXN * 2);
-    memcpy(tmp.source_weight, g->flowback.weight, sizeof(float) * MAXN);
-    tmp.n = g->flowback.n;
-    tmp.flag = HAS_SOURCE;
+    memcpy(tmp->source_ihist, g->flowback.hist, sizeof(float) * HISTN);
+    memcpy(tmp->source_mean, g->flowback.mean, sizeof(float) * MAXN * 2);
+    memcpy(tmp->source_var, g->flowback.var, sizeof(float) * MAXN * 2);
+    memcpy(tmp->source_weight, g->flowback.weight, sizeof(float) * MAXN);
+    tmp->n = g->flowback.n;
+    tmp->flag = HAS_SOURCE;
   }
   module->default_enabled = 0;
 
 end:
-  memcpy(module->default_params, &tmp, sizeof(dt_iop_colormapping_params_t));
-  memcpy(module->params, &tmp, sizeof(dt_iop_colormapping_params_t));
+  memcpy(module->default_params, tmp, sizeof(dt_iop_colormapping_params_t));
+  memcpy(module->params, tmp, sizeof(dt_iop_colormapping_params_t));
+  free(tmp);
 }
 
 
@@ -1002,6 +1016,7 @@ static void process_clusters(gpointer instance, gpointer user_data)
   if(!g || !g->buffer) return;
   if(!(p->flag & ACQUIRE)) return;
 
+  const int reset = darktable.gui->reset;
   darktable.gui->reset = 1;
 
   dt_pthread_mutex_lock(&g->lock);
@@ -1068,7 +1083,7 @@ static void process_clusters(gpointer instance, gpointer user_data)
   }
 
   p->flag &= ~(GET_TARGET | GET_SOURCE | ACQUIRE);
-  darktable.gui->reset = 0;
+  darktable.gui->reset = reset;
 
   if(p->flag & HAS_SOURCE) dt_dev_add_history_item(darktable.develop, self, TRUE);
 

@@ -123,6 +123,192 @@ static int _get_opacity(dt_masks_form_gui_t *gui, const dt_masks_form_t *form)
   return opacity;
 }
 
+static dt_masks_type_t _get_all_types_in_group(dt_masks_form_t *form)
+{
+  if(form->type & DT_MASKS_GROUP)
+  {
+    dt_masks_type_t tp = 0;
+    GList *l = form->points;
+    while(l)
+    {
+      const dt_masks_point_group_t *pt = (dt_masks_point_group_t *)l->data;
+      dt_masks_form_t *f = dt_masks_get_from_id(darktable.develop, pt->formid);
+      tp |= _get_all_types_in_group(f);
+      l = g_list_next(l);
+    }
+    return tp;
+  }
+  else
+  {
+    return form->type;
+  }
+}
+
+GSList *dt_masks_mouse_actions(dt_masks_form_t *form)
+{
+  dt_masks_type_t formtype = _get_all_types_in_group(form);
+  GSList *lm = NULL;
+  dt_mouse_action_t *a = NULL;
+
+  if(formtype != 0)
+  {
+    a = (dt_mouse_action_t *)calloc(1, sizeof(dt_mouse_action_t));
+    a->action = DT_MOUSE_ACTION_RIGHT;
+    g_strlcpy(a->name, _("[SHAPE] remove shape"), sizeof(a->name));
+    lm = g_slist_append(lm, a);
+  }
+  if((formtype & DT_MASKS_PATH) == DT_MASKS_PATH)
+  {
+    a = (dt_mouse_action_t *)calloc(1, sizeof(dt_mouse_action_t));
+    a->action = DT_MOUSE_ACTION_LEFT;
+    g_strlcpy(a->name, _("[PATH creation] add a smooth node"), sizeof(a->name));
+    lm = g_slist_append(lm, a);
+
+    a = (dt_mouse_action_t *)calloc(1, sizeof(dt_mouse_action_t));
+    a->key.accel_mods = GDK_CONTROL_MASK;
+    a->action = DT_MOUSE_ACTION_LEFT;
+    g_strlcpy(a->name, _("[PATH creation] add a sharp node"), sizeof(a->name));
+    lm = g_slist_append(lm, a);
+
+    a = (dt_mouse_action_t *)calloc(1, sizeof(dt_mouse_action_t));
+    a->action = DT_MOUSE_ACTION_RIGHT;
+    g_strlcpy(a->name, _("[PATH creation] terminate path creation"), sizeof(a->name));
+    lm = g_slist_append(lm, a);
+
+    a = (dt_mouse_action_t *)calloc(1, sizeof(dt_mouse_action_t));
+    a->key.accel_mods = GDK_CONTROL_MASK;
+    a->action = DT_MOUSE_ACTION_SCROLL;
+    g_strlcpy(a->name, _("[PATH on node] switch between smooth/sharp node"), sizeof(a->name));
+    lm = g_slist_append(lm, a);
+
+    a = (dt_mouse_action_t *)calloc(1, sizeof(dt_mouse_action_t));
+    a->action = DT_MOUSE_ACTION_RIGHT;
+    g_strlcpy(a->name, _("[PATH on node] remove the node"), sizeof(a->name));
+    lm = g_slist_append(lm, a);
+
+    a = (dt_mouse_action_t *)calloc(1, sizeof(dt_mouse_action_t));
+    a->action = DT_MOUSE_ACTION_RIGHT;
+    g_strlcpy(a->name, _("[PATH on feather] reset curvature"), sizeof(a->name));
+    lm = g_slist_append(lm, a);
+
+    a = (dt_mouse_action_t *)calloc(1, sizeof(dt_mouse_action_t));
+    a->key.accel_mods = GDK_CONTROL_MASK;
+    a->action = DT_MOUSE_ACTION_LEFT;
+    g_strlcpy(a->name, _("[PATH on segment] add node"), sizeof(a->name));
+    lm = g_slist_append(lm, a);
+
+    a = (dt_mouse_action_t *)calloc(1, sizeof(dt_mouse_action_t));
+    a->action = DT_MOUSE_ACTION_SCROLL;
+    g_strlcpy(a->name, _("[PATH] change size"), sizeof(a->name));
+    lm = g_slist_append(lm, a);
+
+    a = (dt_mouse_action_t *)calloc(1, sizeof(dt_mouse_action_t));
+    a->key.accel_mods = GDK_CONTROL_MASK;
+    a->action = DT_MOUSE_ACTION_SCROLL;
+    g_strlcpy(a->name, _("[PATH] change opacity"), sizeof(a->name));
+    lm = g_slist_append(lm, a);
+
+    a = (dt_mouse_action_t *)calloc(1, sizeof(dt_mouse_action_t));
+    a->key.accel_mods = GDK_SHIFT_MASK;
+    a->action = DT_MOUSE_ACTION_SCROLL;
+    g_strlcpy(a->name, _("[PATH] change feather size"), sizeof(a->name));
+    lm = g_slist_append(lm, a);
+  }
+  if((formtype & DT_MASKS_GRADIENT) == DT_MASKS_GRADIENT)
+  {
+    a = (dt_mouse_action_t *)calloc(1, sizeof(dt_mouse_action_t));
+    a->action = DT_MOUSE_ACTION_LEFT_DRAG;
+    g_strlcpy(a->name, _("[GRADIENT on pivot] rotate shape"), sizeof(a->name));
+    lm = g_slist_append(lm, a);
+
+    a = (dt_mouse_action_t *)calloc(1, sizeof(dt_mouse_action_t));
+    a->action = DT_MOUSE_ACTION_LEFT_DRAG;
+    g_strlcpy(a->name, _("[GRADIENT creation] set rotation"), sizeof(a->name));
+    lm = g_slist_append(lm, a);
+
+    a = (dt_mouse_action_t *)calloc(1, sizeof(dt_mouse_action_t));
+    a->action = DT_MOUSE_ACTION_SCROLL;
+    g_strlcpy(a->name, _("[GRADIENT] change compression"), sizeof(a->name));
+    lm = g_slist_append(lm, a);
+
+    a = (dt_mouse_action_t *)calloc(1, sizeof(dt_mouse_action_t));
+    a->key.accel_mods = GDK_CONTROL_MASK;
+    a->action = DT_MOUSE_ACTION_SCROLL;
+    g_strlcpy(a->name, _("[GRADIENT] change opacity"), sizeof(a->name));
+    lm = g_slist_append(lm, a);
+  }
+  if((formtype & DT_MASKS_ELLIPSE) == DT_MASKS_ELLIPSE)
+  {
+    a = (dt_mouse_action_t *)calloc(1, sizeof(dt_mouse_action_t));
+    a->action = DT_MOUSE_ACTION_SCROLL;
+    g_strlcpy(a->name, _("[ELLIPSE] change size"), sizeof(a->name));
+    lm = g_slist_append(lm, a);
+
+    a = (dt_mouse_action_t *)calloc(1, sizeof(dt_mouse_action_t));
+    a->key.accel_mods = GDK_CONTROL_MASK;
+    a->action = DT_MOUSE_ACTION_SCROLL;
+    g_strlcpy(a->name, _("[ELLIPSE] change opacity"), sizeof(a->name));
+    lm = g_slist_append(lm, a);
+
+    a = (dt_mouse_action_t *)calloc(1, sizeof(dt_mouse_action_t));
+    a->key.accel_mods = GDK_SHIFT_MASK;
+    a->action = DT_MOUSE_ACTION_LEFT;
+    g_strlcpy(a->name, _("[ELLIPSE] switch feathering mode"), sizeof(a->name));
+    lm = g_slist_append(lm, a);
+
+    a = (dt_mouse_action_t *)calloc(1, sizeof(dt_mouse_action_t));
+    a->key.accel_mods = GDK_CONTROL_MASK;
+    a->action = DT_MOUSE_ACTION_LEFT_DRAG;
+    g_strlcpy(a->name, _("[ELLIPSE] rotate shape"), sizeof(a->name));
+    lm = g_slist_append(lm, a);
+  }
+  if((formtype & DT_MASKS_BRUSH) == DT_MASKS_BRUSH)
+  {
+    a = (dt_mouse_action_t *)calloc(1, sizeof(dt_mouse_action_t));
+    a->action = DT_MOUSE_ACTION_SCROLL;
+    g_strlcpy(a->name, _("[BRUSH creation] change size"), sizeof(a->name));
+    lm = g_slist_append(lm, a);
+
+    a = (dt_mouse_action_t *)calloc(1, sizeof(dt_mouse_action_t));
+    a->key.accel_mods = GDK_SHIFT_MASK;
+    a->action = DT_MOUSE_ACTION_SCROLL;
+    g_strlcpy(a->name, _("[BRUSH creation] change hardness"), sizeof(a->name));
+    lm = g_slist_append(lm, a);
+
+    a = (dt_mouse_action_t *)calloc(1, sizeof(dt_mouse_action_t));
+    a->key.accel_mods = GDK_CONTROL_MASK;
+    a->action = DT_MOUSE_ACTION_SCROLL;
+    g_strlcpy(a->name, _("[BRUSH] change opacity"), sizeof(a->name));
+    lm = g_slist_append(lm, a);
+
+    a = (dt_mouse_action_t *)calloc(1, sizeof(dt_mouse_action_t));
+    a->action = DT_MOUSE_ACTION_SCROLL;
+    g_strlcpy(a->name, _("[BRUSH] change hardness"), sizeof(a->name));
+    lm = g_slist_append(lm, a);
+  }
+  if((formtype & DT_MASKS_CIRCLE) == DT_MASKS_CIRCLE)
+  {
+    a = (dt_mouse_action_t *)calloc(1, sizeof(dt_mouse_action_t));
+    a->action = DT_MOUSE_ACTION_SCROLL;
+    g_strlcpy(a->name, _("[CIRCLE] change size"), sizeof(a->name));
+    lm = g_slist_append(lm, a);
+
+    a = (dt_mouse_action_t *)calloc(1, sizeof(dt_mouse_action_t));
+    a->key.accel_mods = GDK_CONTROL_MASK;
+    a->action = DT_MOUSE_ACTION_SCROLL;
+    g_strlcpy(a->name, _("[CIRCLE] change opacity"), sizeof(a->name));
+    lm = g_slist_append(lm, a);
+
+    a = (dt_mouse_action_t *)calloc(1, sizeof(dt_mouse_action_t));
+    a->key.accel_mods = GDK_SHIFT_MASK;
+    a->action = DT_MOUSE_ACTION_SCROLL;
+    g_strlcpy(a->name, _("[CIRCLE] change feather size"), sizeof(a->name));
+    lm = g_slist_append(lm, a);
+  }
+
+  return lm;
+}
+
 static void _set_hinter_message(dt_masks_form_gui_t *gui, const dt_masks_form_t *form)
 {
   char msg[256] = "";
@@ -994,7 +1180,7 @@ dt_masks_form_t *dt_masks_create(dt_masks_type_t type)
 dt_masks_form_t *dt_masks_create_ext(dt_masks_type_t type)
 {
   dt_masks_form_t *form = dt_masks_create(type);
-  
+
   // all forms created here are registered in darktable.develop->allforms for later cleanup
   if(form)
   darktable.develop->allforms = g_list_append(darktable.develop->allforms, form);
@@ -1005,7 +1191,7 @@ dt_masks_form_t *dt_masks_create_ext(dt_masks_type_t type)
 void dt_masks_replace_current_forms(dt_develop_t *dev, GList *forms)
 {
   GList *forms_tmp = dt_masks_dup_forms_deep(forms, NULL);
-  
+
   while(dev->forms)
   {
     darktable.develop->allforms = g_list_append(darktable.develop->allforms, dev->forms->data);
@@ -1036,7 +1222,7 @@ void dt_masks_read_masks_history(dt_develop_t *dev, const int imgid)
   dt_dev_history_item_t *hist_item = NULL;
   dt_dev_history_item_t *hist_item_last = NULL;
   int num_prev = -1;
-  
+
   sqlite3_stmt *stmt;
   DT_DEBUG_SQLITE3_PREPARE_V2(
       dt_database_get(darktable.db),
@@ -1163,7 +1349,7 @@ void dt_masks_read_masks_history(dt_develop_t *dev, const int imgid)
     if(num < dev->history_end) hist_item_last = hist_item;
   }
   sqlite3_finalize(stmt);
-  
+
   // and we update the current forms snapshot
   dt_masks_replace_current_forms(dev, (hist_item_last)?hist_item_last->forms:NULL);
 }
@@ -1457,10 +1643,6 @@ void dt_masks_events_post_expose(struct dt_iop_module_t *module, cairo_t *cr, in
   dt_masks_form_gui_t *gui = dev->form_gui;
   if(!gui) return;
   if(!form) return;
-  // if it's a spot in creation, nothing to draw
-  // add preview when creating a circle or ellipse
-  if((form->type & DT_MASKS_GRADIENT) && gui->creation)
-    return;
 
   float wd = dev->preview_pipe->backbuf_width;
   float ht = dev->preview_pipe->backbuf_height;
@@ -1485,8 +1667,9 @@ void dt_masks_events_post_expose(struct dt_iop_module_t *module, cairo_t *cr, in
   cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
 
   // we update the form if needed
-  // add preview when creating a circle or ellipse
-  if(!(((form->type & DT_MASKS_CIRCLE) || (form->type & DT_MASKS_ELLIPSE)) && gui->creation))
+  // add preview when creating a circle, ellipse and gradient
+  if(!(((form->type & DT_MASKS_CIRCLE) || (form->type & DT_MASKS_ELLIPSE) || (form->type & DT_MASKS_GRADIENT))
+       && gui->creation))
     dt_masks_gui_form_test_create(form, gui);
 
   // draw form
@@ -1541,8 +1724,14 @@ void dt_masks_clear_form_gui(dt_develop_t *dev)
 
 void dt_masks_change_form_gui(dt_masks_form_t *newform)
 {
+  dt_masks_form_t *old = darktable.develop->form_visible;
+
   dt_masks_clear_form_gui(darktable.develop);
   darktable.develop->form_visible = newform;
+
+  /* update sticky accels window */
+  if(newform != old && darktable.view_manager->accels_window.window && darktable.view_manager->accels_window.sticky)
+    dt_view_accels_refresh(darktable.view_manager);
 }
 
 void dt_masks_reset_form_gui(void)
@@ -1908,9 +2097,10 @@ void dt_masks_iop_value_changed_callback(GtkWidget *widget, struct dt_iop_module
   if(sel == 0) return;
   if(sel == 1)
   {
+    const int reset = darktable.gui->reset;
     darktable.gui->reset = 1;
     dt_bauhaus_combobox_set(bd->masks_combo, 0);
-    darktable.gui->reset = 0;
+    darktable.gui->reset = reset;
     return;
   }
   if(sel > 0)
@@ -2391,7 +2581,7 @@ int _masks_cleanup_unused(GList **_forms, GList *history_list, const int history
 {
   int masks_removed = 0;
   GList *forms = *_forms;
-  
+
   // we create a table to store the ids of used forms
   guint nbf = g_list_length(forms);
   int *used = calloc(nbf, sizeof(int));
@@ -2439,9 +2629,9 @@ int _masks_cleanup_unused(GList **_forms, GList *history_list, const int history
   }
 
   free(used);
-  
+
   *_forms = forms;
-  
+
   return masks_removed;
 }
 
@@ -2472,10 +2662,10 @@ void dt_masks_cleanup_unused_from_list(GList *history_list)
 void dt_masks_cleanup_unused(dt_develop_t *dev)
 {
   dt_masks_change_form_gui(NULL);
-  
+
   // we remove the forms from history
   dt_masks_cleanup_unused_from_list(dev->history);
-  
+
   // and we save all that
   GList *forms = NULL;
   dt_iop_module_t *module = NULL;
@@ -2484,16 +2674,16 @@ void dt_masks_cleanup_unused(dt_develop_t *dev)
   while(history && num < dev->history_end)
   {
     dt_dev_history_item_t *hist = (dt_dev_history_item_t *)history->data;
-    
+
     if(hist->forms) forms = hist->forms;
     if(hist->module && strcmp(hist->op_name, "mask_manager") != 0) module = hist->module;
-    
+
     num++;
     history = g_list_next(history);
   }
-  
+
   dt_masks_replace_current_forms(dev, forms);
-  
+
   if(module)
     dt_dev_add_history_item(dev, module, module->enabled);
   else

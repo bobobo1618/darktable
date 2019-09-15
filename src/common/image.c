@@ -21,6 +21,7 @@
 #include "common/darktable.h"
 #include "common/debug.h"
 #include "common/exif.h"
+#include "common/file_location.h"
 #include "common/grouping.h"
 #include "common/history.h"
 #include "common/image_cache.h"
@@ -134,14 +135,7 @@ int dt_image_is_raw(const dt_image_t *img)
 
 int dt_image_is_monochrome(const dt_image_t *img)
 {
-  if(strncmp(img->exif_maker, "Leica Camera AG", 15) != 0) return 0;
-
-  gchar *tmp_model = g_ascii_strdown(img->exif_model, -1);
-
-  const int res = strstr(tmp_model, "monochrom") != NULL;
-  g_free(tmp_model);
-
-  return res;
+   return (img->flags & DT_IMAGE_MONOCHROME);
 }
 
 const char *dt_image_film_roll_name(const char *path)
@@ -605,6 +599,20 @@ void dt_image_set_aspect_ratio_to(const int32_t imgid, double aspect_ratio)
     if (darktable.collection->params.sort == DT_COLLECTION_SORT_ASPECT_RATIO)
       dt_control_signal_raise(darktable.signals, DT_SIGNAL_COLLECTION_CHANGED);
   }
+}
+
+void dt_image_reset_aspect_ratio(const int32_t imgid)
+{
+  sqlite3_stmt *stmt;
+
+  DT_DEBUG_SQLITE3_PREPARE_V2(dt_database_get(darktable.db), "UPDATE images SET aspect_ratio=0.0 WHERE id=?1", -1,
+                              &stmt, NULL);
+  DT_DEBUG_SQLITE3_BIND_INT(stmt, 1, imgid);
+  sqlite3_step(stmt);
+  sqlite3_finalize(stmt);
+
+  if(darktable.collection->params.sort == DT_COLLECTION_SORT_ASPECT_RATIO)
+    dt_control_signal_raise(darktable.signals, DT_SIGNAL_COLLECTION_CHANGED);
 }
 
 double dt_image_set_aspect_ratio(const int32_t imgid)
@@ -1289,6 +1297,8 @@ void dt_image_init(dt_image_t *img)
   img->wb_coeffs[1] = NAN;
   img->wb_coeffs[2] = NAN;
   img->wb_coeffs[3] = NAN;
+  img->usercrop[0] = img->usercrop[1] = 0;
+  img->usercrop[2] = img->usercrop[3] = 1;
   img->cache_entry = 0;
 }
 
@@ -1697,6 +1707,8 @@ int32_t dt_image_copy_rename(const int32_t imgid, const int32_t filmid, const gc
 
         // write xmp file
         dt_image_write_sidecar_file(newid);
+
+        dt_collection_update_query(darktable.collection);
       }
 
       g_free(filename);

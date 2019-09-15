@@ -535,7 +535,10 @@ void distort_mask(struct dt_iop_module_t *self, struct dt_dev_pixelpipe_iop_t *p
   if(!d->flags && d->angle == 0.0 && d->all_off && roi_in->width == roi_out->width && roi_in->height == roi_out->height)
   {
 #ifdef _OPENMP
-#pragma omp parallel for schedule(static) default(none) shared(d)
+#pragma omp parallel for default(none) \
+    dt_omp_firstprivate(in, out, roi_out) \
+    shared(d) \
+    schedule(static)
 #endif
     for(int j = 0; j < roi_out->height; j++)
     {
@@ -556,7 +559,10 @@ void distort_mask(struct dt_iop_module_t *self, struct dt_dev_pixelpipe_iop_t *p
     keystone_get_matrix(k_space, kxa, kxb, kxc, kxd, kya, kyb, kyc, kyd, &ma, &mb, &md, &me, &mg, &mh);
 
 #ifdef _OPENMP
-#pragma omp parallel for schedule(static) default(none) shared(d, interpolation, k_space, ma, mb, md, me, mg, mh)
+#pragma omp parallel for default(none) \
+    dt_omp_firstprivate(in, kxa, kya, out, roi_in, roi_out) \
+    shared(d, interpolation, k_space, ma, mb, md, me, mg, mh) \
+    schedule(static)
 #endif
     // (slow) point-by-point transformation.
     // TODO: optimize with scanlines and linear steps between?
@@ -907,7 +913,10 @@ void process(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, const 
      && roi_in->height == roi_out->height)
   {
 #ifdef _OPENMP
-#pragma omp parallel for schedule(static) default(none) shared(d)
+#pragma omp parallel for default(none) \
+    dt_omp_firstprivate(ch, ivoid, ovoid, roi_out) \
+    shared(d) \
+    schedule(static)
 #endif
     for(int j = 0; j < roi_out->height; j++)
     {
@@ -933,7 +942,10 @@ void process(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, const 
     keystone_get_matrix(k_space, kxa, kxb, kxc, kxd, kya, kyb, kyc, kyd, &ma, &mb, &md, &me, &mg, &mh);
 
 #ifdef _OPENMP
-#pragma omp parallel for schedule(static) default(none) shared(d, interpolation, k_space, ma, mb, md, me, mg, mh)
+#pragma omp parallel for default(none) \
+    dt_omp_firstprivate(ch, ch_width, ivoid, kxa, kya, ovoid, roi_in, roi_out) \
+    shared(d, interpolation, k_space, ma, mb, md, me, mg, mh) \
+    schedule(static)
 #endif
     // (slow) point-by-point transformation.
     // TODO: optimize with scanlines and linear steps between?
@@ -983,7 +995,7 @@ int process_cl(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, cl_m
                const dt_iop_roi_t *const roi_in, const dt_iop_roi_t *const roi_out)
 {
   dt_iop_clipping_data_t *d = (dt_iop_clipping_data_t *)piece->data;
-  dt_iop_clipping_global_data_t *gd = (dt_iop_clipping_global_data_t *)self->data;
+  dt_iop_clipping_global_data_t *gd = (dt_iop_clipping_global_data_t *)self->global_data;
 
   cl_int err = -999;
   const int devid = piece->pipe->devid;
@@ -1543,8 +1555,10 @@ static void apply_box_aspect(dt_iop_module_t *self, _grab_region_t grab)
 
 void reload_defaults(dt_iop_module_t *self)
 {
+  const dt_image_t *img = &self->dev->image_storage;
   dt_iop_clipping_params_t tmp
-      = (dt_iop_clipping_params_t){ 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f,  0.2f, 0.2f, 0.8f, 0.2f,
+      = (dt_iop_clipping_params_t){ 0.0f, img->usercrop[1], img->usercrop[0], img->usercrop[3], img->usercrop[2],
+                                    0.0f, 0.0f, 0.2f, 0.2f, 0.8f, 0.2f,
                                     0.8f, 0.8f, 0.2f, 0.8f, 0,    0,    FALSE, TRUE, -1,   -1 };
   memcpy(self->params, &tmp, sizeof(dt_iop_clipping_params_t));
   memcpy(self->default_params, &tmp, sizeof(dt_iop_clipping_params_t));
@@ -3213,6 +3227,30 @@ void connect_key_accels(dt_iop_module_t *self)
   dt_accel_connect_iop(self, "commit", closure);
 
   dt_accel_connect_slider_iop(self, "angle", GTK_WIDGET(g->angle));
+}
+
+GSList *mouse_actions(struct dt_iop_module_t *self)
+{
+  GSList *lm = NULL;
+  dt_mouse_action_t *a = NULL;
+
+  a = (dt_mouse_action_t *)calloc(1, sizeof(dt_mouse_action_t));
+  a->action = DT_MOUSE_ACTION_LEFT_DRAG;
+  g_snprintf(a->name, sizeof(a->name), _("[%s on borders] crop"), self->name(self));
+  lm = g_slist_append(lm, a);
+
+  a = (dt_mouse_action_t *)calloc(1, sizeof(dt_mouse_action_t));
+  a->key.accel_mods = GDK_SHIFT_MASK;
+  a->action = DT_MOUSE_ACTION_LEFT_DRAG;
+  g_snprintf(a->name, sizeof(a->name), _("[%s on borders] crop keeping ratio"), self->name(self));
+  lm = g_slist_append(lm, a);
+
+  a = (dt_mouse_action_t *)calloc(1, sizeof(dt_mouse_action_t));
+  a->action = DT_MOUSE_ACTION_RIGHT_DRAG;
+  g_snprintf(a->name, sizeof(a->name), _("[%s] define/rotate horizon"), self->name(self));
+  lm = g_slist_append(lm, a);
+
+  return lm;
 }
 
 #undef PHI

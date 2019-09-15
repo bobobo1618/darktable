@@ -31,7 +31,7 @@
   <dtconfig prefs="gui">
     <name>ui_last/no_april1st</name>
     <type>bool</type>
-    <default>false</default>
+    <default>true</default>
     <shortdescription>do not show april 1st game</shortdescription>
   </dtconfig>
   <dtconfig prefs="core" section="cpugpu">
@@ -88,7 +88,7 @@
     <type>int</type>
     <default>300</default>
     <shortdescription>amount of OpenCL memory (in MB) which we assume as being reserved for the driver</shortdescription>
-    <longdescription>this amount of memory (in MB) will be substracted from total GPU memory in order to calculate the available OpenCL memory. too low values will lead to out-of-memory situations in OpenCL processing. too high values will lead to unnecessary tiling (needs a restart).</longdescription>
+    <longdescription>this amount of memory (in MB) will be subtracted from total GPU memory in order to calculate the available OpenCL memory. too low values will lead to out-of-memory situations in OpenCL processing. too high values will lead to unnecessary tiling (needs a restart).</longdescription>
   </dtconfig>
   <dtconfig>
     <name>opencl_avoid_atomics</name>
@@ -201,6 +201,27 @@
     <shortdescription>omit hierarchy in simple tag lists</shortdescription>
     <longdescription>when exporting images the hierarchical tags are also added as a simple list of non-hierarchical ones to make them visible to some other programs. when this option is checked darktable will only include their last part and ignore the rest. so 'foo|bar|baz' will only add 'baz'.</longdescription>
   </dtconfig>
+  <dtconfig prefs="core">
+    <name>plugins/lighttable/export/export_private_tags</name>
+    <type>bool</type>
+    <default>false</default>
+    <shortdescription>force exportation of private tags</shortdescription>
+    <longdescription>darktable doesn't export private tags per default. this option allows to export them to XMP-dc Subject and XMP-lr Hierarchical Subject.</longdescription>
+  </dtconfig>
+  <dtconfig prefs="core">
+    <name>plugins/lighttable/export/export_tag_synonyms</name>
+    <type>bool</type>
+    <default>false</default>
+    <shortdescription>request exportation of synonyms</shortdescription>
+    <longdescription>darktable doesn't export the synonyms per default. this option allows to export them along with tags to XMP-dc Subject.</longdescription>
+  </dtconfig>
+  <dtconfig prefs="core">
+    <name>plugins/lighttable/tagging/no_entry_completion</name>
+    <type>bool</type>
+    <default>false</default>
+    <shortdescription>disable the entry completion</shortdescription>
+    <longdescription>the entry completion is useful for those who enter tags from keybord only. for others the entry completion can be embarassing. need to restart darktable.</longdescription>
+  </dtconfig>
   <dtconfig prefs="core" capability="opencl" section="cpugpu">
     <name>opencl</name>
     <type>bool</type>
@@ -219,7 +240,7 @@
     </type>
     <default>default</default>
     <shortdescription>OpenCL scheduling profile</shortdescription>
-    <longdescription>defines how preview and full pixelpipe tasks are scheduled on OpenCL enabled systems. default - GPU processes full and CPU processes preview pipe (adaptable by config parameters); multiple GPUs - process both pixelpipes in parallel on two different GPUs; very fast GPU - process both pixelipes sequentially on the GPU.</longdescription>
+    <longdescription>defines how preview and full pixelpipe tasks are scheduled on OpenCL enabled systems. default - GPU processes full and CPU processes preview pipe (adaptable by config parameters); multiple GPUs - process both pixelpipes in parallel on two different GPUs; very fast GPU - process both pixelpipes sequentially on the GPU.</longdescription>
   </dtconfig>
   <dtconfig>
     <name>opencl_synch_cache</name>
@@ -1902,7 +1923,7 @@
     <type>dir</type>
     <default></default>
     <shortdescription>3D lut root folder</shortdescription>
-    <longdescription>this folder (and sub-folders) contains Lut files used but lut3d modules</longdescription>
+    <longdescription>this folder (and sub-folders) contains Lut files used but lut3d modules. need to restart darktable.</longdescription>
   </dtconfig>
   <dtconfig prefs="core" section="quality">
     <name>plugins/darkroom/basecurve/auto_apply</name>
@@ -1951,7 +1972,7 @@
     <type>int</type>
     <default>4</default>
     <shortdescription>maximum number of full-res images to load in memory</shortdescription>
-    <longdescription>if more images are display in expose mode, zooming will be desactivated</longdescription>
+    <longdescription>if more images are display in expose mode, zooming will be deactivated</longdescription>
   </dtconfig>
   <dtconfig>
     <name>codepaths/sse2</name>

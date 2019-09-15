@@ -625,7 +625,9 @@ static gboolean _lib_filmstrip_button_press_callback(GtkWidget *w, GdkEventButto
             if(_lib_filmstrip_imgid_in_collection(darktable.collection, mouse_over_id) == 0)
               dt_view_filmstrip_scroll_relative(0, offset);
 
-          //  gtk_widget_queue_draw(darktable.view_manager->proxy.filmstrip.module->widget);
+          dt_collection_update_query(darktable.collection); // update the counter and selection
+          dt_collection_hint_message(darktable.collection); // More than this, we need to redraw all
+
           gtk_widget_queue_draw(strip->filmstrip);
           return TRUE;
         }
@@ -760,22 +762,11 @@ static gboolean _lib_filmstrip_draw_callback(GtkWidget *widget, cairo_t *wcr, gp
   const int img_pointerx = (int)fmodf(pointerx, wd);
   const int img_pointery = (int)pointery;
 
-  const dt_collection_sort_t current_sort = dt_collection_get_sort_field(darktable.collection);
-  const gboolean reverse = dt_collection_get_sort_descending(darktable.collection);
-
-  // we disable the shuffle sort on the filmstrip as this cannot be work with the current implementation. On each redraw
-  // we get a new order for the collection.
-  if(current_sort == DT_COLLECTION_SORT_SHUFFLE)
-  {
-    dt_collection_set_sort(darktable.collection, DT_COLLECTION_SORT_ID, reverse);
-    dt_collection_update(darktable.collection);
-  }
-
   /* get the count of current collection */
   strip->collection_count = dt_collection_get_count(darktable.collection);
 
   /* get the collection query */
-  const gchar *query = dt_collection_get_query(darktable.collection);
+  const gchar *query = "SELECT imgid FROM memory.collected_images ORDER BY rowid LIMIT ?1, ?2";
   if(!query) return FALSE;
 
   if(offset < 0) strip->offset = offset = 0;
@@ -784,13 +775,6 @@ static gboolean _lib_filmstrip_draw_callback(GtkWidget *widget, cairo_t *wcr, gp
   DT_DEBUG_SQLITE3_PREPARE_V2(dt_database_get(darktable.db), query, -1, &stmt, NULL);
   DT_DEBUG_SQLITE3_BIND_INT(stmt, 1, offset - max_cols / 2);
   DT_DEBUG_SQLITE3_BIND_INT(stmt, 2, max_cols);
-
-  // reset previous sort
-  if(current_sort == DT_COLLECTION_SORT_SHUFFLE)
-  {
-    dt_collection_set_sort(darktable.collection, current_sort, reverse);
-    dt_collection_update(darktable.collection);
-  }
 
   cairo_save(cr);
   cairo_translate(cr, empty_edge, 0.0f);
@@ -836,16 +820,18 @@ static gboolean _lib_filmstrip_draw_callback(GtkWidget *widget, cairo_t *wcr, gp
       {
         if(!strip->force_expose_all && id == mouse_over_id) strip->last_exposed_id = id;
 
-        dt_view_image_expose_t params = { 0 };
-        params.image_over = &(strip->image_over);
-        params.imgid = id;
-        params.mouse_over = (id == mouse_over_id);
-        params.cr = cr;
-        params.width = wd;
-        params.height = ht;
-        params.px = img_pointerx;
-        params.py = img_pointery;
-        params.zoom = max_cols;
+        dt_view_image_expose_t params = {
+          .image_over = &(strip->image_over),
+          .imgid      = id,
+          .mouse_over = (id == mouse_over_id),
+          .cr         = cr,
+          .width      = wd,
+          .height     = ht,
+          .px         = img_pointerx,
+          .py         = img_pointery,
+          .zoom       = max_cols
+        };
+
         const int thumb_missed = dt_view_image_expose(&params);
 
         // if thumb is missing, record it for expose int next round
@@ -994,16 +980,15 @@ static gboolean _lib_filmstrip_paste_history_key_accel_callback(GtkAccelGroup *a
   dt_lib_filmstrip_t *strip = (dt_lib_filmstrip_t *)data;
   const int mode = dt_conf_get_int("plugins/lighttable/copy_history/pastemode");
 
-  if(dt_history_copy_and_paste_on_selection(strip->history_copy_imgid, (mode == 0) ? TRUE : FALSE,
-                                            strip->dg.selops) != 0)
-  {
-    const int32_t mouse_over_id = dt_control_get_mouse_over_id();
-    if(mouse_over_id <= 0) return FALSE;
+  const int img = dt_view_get_image_to_act_on();
 
-    dt_history_copy_and_paste_on_image(strip->history_copy_imgid, mouse_over_id, (mode == 0) ? TRUE : FALSE,
+  if(img < 0)
+    dt_history_copy_and_paste_on_selection(strip->history_copy_imgid, (mode == 0) ? TRUE : FALSE, strip->dg.selops);
+  else
+    dt_history_copy_and_paste_on_image(strip->history_copy_imgid, img, (mode == 0) ? TRUE : FALSE,
                                        strip->dg.selops);
-  }
 
+  dt_collection_update_query(darktable.collection);
   dt_control_queue_redraw_center();
   return TRUE;
 }
@@ -1017,21 +1002,19 @@ static gboolean _lib_filmstrip_paste_history_parts_key_accel_callback(GtkAccelGr
   dt_lib_filmstrip_t *strip = (dt_lib_filmstrip_t *)data;
   const int mode = dt_conf_get_int("plugins/lighttable/copy_history/pastemode");
 
-  // get mouse over before launching the dialog
-  const int32_t mouse_over_id = dt_control_get_mouse_over_id();
+  // get image id before launching the dialog
+  const int img = dt_view_get_image_to_act_on();
 
   const int res = dt_gui_hist_dialog_new(&(strip->dg), strip->history_copy_imgid, FALSE);
   if(res == GTK_RESPONSE_CANCEL) return FALSE;
 
-  if(dt_history_copy_and_paste_on_selection(strip->history_copy_imgid, (mode == 0) ? TRUE : FALSE,
-                                            strip->dg.selops) != 0)
-  {
-    if(mouse_over_id <= 0) return FALSE;
-
-    dt_history_copy_and_paste_on_image(strip->history_copy_imgid, mouse_over_id, (mode == 0) ? TRUE : FALSE,
+  if(img < 0)
+    dt_history_copy_and_paste_on_selection(strip->history_copy_imgid, (mode == 0) ? TRUE : FALSE, strip->dg.selops);
+  else
+    dt_history_copy_and_paste_on_image(strip->history_copy_imgid, img, (mode == 0) ? TRUE : FALSE,
                                        strip->dg.selops);
-  }
 
+  dt_collection_update_query(darktable.collection);
   dt_control_queue_redraw_center();
   return TRUE;
 }
@@ -1046,6 +1029,7 @@ static gboolean _lib_filmstrip_discard_history_key_accel_callback(GtkAccelGroup 
   if(mouse_over_id <= 0) return FALSE;
 
   dt_history_delete_on_image(mouse_over_id);
+  dt_collection_update_query(darktable.collection);
   dt_control_queue_redraw_center();
   return TRUE;
 }
@@ -1067,7 +1051,11 @@ static gboolean _lib_filmstrip_duplicate_image_key_accel_callback(GtkAccelGroup 
   if(!_is_on_lighttable() && dt_dev_is_current_image(darktable.develop, mouse_over_id)) dt_dev_write_history(darktable.develop);
 
   const int32_t newimgid = dt_image_duplicate(mouse_over_id);
-  if(newimgid != -1) dt_history_copy_and_paste_on_image(mouse_over_id, newimgid, FALSE, NULL);
+  if(newimgid != -1)
+  {
+    dt_history_copy_and_paste_on_image(mouse_over_id, newimgid, FALSE, NULL);
+    dt_collection_update_query(darktable.collection);
+  }
 
   dt_control_queue_redraw_center();
   return TRUE;
