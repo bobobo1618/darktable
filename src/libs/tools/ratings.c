@@ -145,7 +145,7 @@ static gboolean _lib_ratings_draw_callback(GtkWidget *widget, cairo_t *crf, gpoi
   for(int k = 0; k < 5; k++)
   {
     /* outline star */
-    dt_draw_star(cr, star_size / 2.0 + x, star_size / 2.0, star_size / 2.0, star_size / 4.0);
+    dt_draw_star(cr, star_size / 2.0 + x, star_size / 2.0, star_size / 2.0, star_size / (2.0 * 2.5));
     if(x < d->pointerx)
     {
       cairo_fill_preserve(cr);
@@ -195,20 +195,10 @@ static gboolean _lib_ratings_button_press_callback(GtkWidget *widget, GdkEventBu
   dt_lib_ratings_t *d = (dt_lib_ratings_t *)self->data;
   if(d->current > 0)
   {
-    int32_t mouse_over_id;
-
-    mouse_over_id = dt_view_get_image_to_act_on();
-
-    if(mouse_over_id <= 0)
-    {
-      dt_ratings_apply_to_selection(d->current);
-    }
-    else
-    {
-      dt_ratings_apply_to_image(mouse_over_id, d->current);
-      // dt_control_log(ngettext("applying rating %d to %d image", "applying rating %d to %d images", 1),
-      // d->current, 1); //FIXME: Change the message after release
-    }
+    const int32_t mouse_over_id = dt_view_get_image_to_act_on();
+    dt_ratings_apply(mouse_over_id, d->current, TRUE, TRUE, TRUE);
+    // dt_control_log(ngettext("applying rating %d to %d image", "applying rating %d to %d images", 1),
+    // d->current, 1); //FIXME: Change the message after release
 
     dt_control_queue_redraw_center();
   }

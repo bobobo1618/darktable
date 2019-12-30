@@ -364,6 +364,8 @@ typedef struct dt_iop_blend_mode_t
 } dt_iop_blend_mode_t;
 
 
+#define DEVELOP_MASKS_NB_SHAPES 5
+
 /** blend gui data */
 typedef struct dt_iop_gui_blend_data_t
 {
@@ -391,6 +393,8 @@ typedef struct dt_iop_gui_blend_data_t
   GtkBox *raster_box;
   GtkDarktableGradientSlider *upper_slider;
   GtkDarktableGradientSlider *lower_slider;
+  GtkLabel *upper_head;
+  GtkLabel *lower_head;
   GtkLabel *upper_label[8];
   GtkLabel *lower_label[8];
   GtkLabel *upper_picker_label;
@@ -416,6 +420,8 @@ typedef struct dt_iop_gui_blend_data_t
   GtkWidget *brightness_slider;
   int tab;
   int channels[8][2];
+  int altmode[8][2];
+  int (*altdisplay[8])(GtkWidget *, dt_iop_module_t *, int);
   dt_dev_pixelpipe_display_mask_t display_channel[8][2];
   dt_dev_pixelpipe_display_mask_t save_for_leave;
   int timeout_handle;
@@ -425,11 +431,8 @@ typedef struct dt_iop_gui_blend_data_t
   float increments[8];
 
   GtkWidget *masks_combo;
-  GtkWidget *masks_path;
-  GtkWidget *masks_circle;
-  GtkWidget *masks_ellipse;
-  GtkWidget *masks_gradient;
-  GtkWidget *masks_brush;
+  GtkWidget *masks_shapes[DEVELOP_MASKS_NB_SHAPES];
+  int masks_type[DEVELOP_MASKS_NB_SHAPES];
   GtkWidget *masks_edit;
   GtkWidget *masks_polarity;
   int *masks_combo_ids;
@@ -478,6 +481,7 @@ void dt_iop_gui_update_blending(dt_iop_module_t *module);
 void dt_iop_gui_update_blendif(dt_iop_module_t *module);
 void dt_iop_gui_update_masks(dt_iop_module_t *module);
 void dt_iop_gui_cleanup_blending(dt_iop_module_t *module);
+void dt_iop_gui_blending_lose_focus(dt_iop_module_t *module);
 
 /** routine to translate from mode id to sequence in option list */
 int dt_iop_gui_blending_mode_seq(dt_iop_gui_blend_data_t *bd, int mode);

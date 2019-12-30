@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.4.0)
+cmake_minimum_required(VERSION 3.10.0)
 
 cmake_policy(SET CMP0011 NEW)
 cmake_policy(SET CMP0025 NEW)
@@ -55,6 +55,15 @@ if (USE_OPENMP)
     endif()
 
     find_package(OpenMP 4.0 REQUIRED)
+endif()
+
+# Check for base threading library
+set(CMAKE_THREAD_PREFER_PTHREAD TRUE)
+find_package(Threads REQUIRED)
+
+# Fail if returned library is not pthread
+if (NOT CMAKE_USE_PTHREADS_INIT)
+    message(FATAL_ERROR "POSIX threads: not found")
 endif()
 
 include(ConfigureChecks.cmake)
@@ -278,7 +287,7 @@ if(TESTBUILD_OPENCL_PROGRAMS)
   endmacro()
 
   # 3.9 is the first version with which this works.
-  find_llvm("8;7;6.0;5.0;4.0;3.9")
+  find_llvm("9;8;7;6.0;5.0;4.0;3.9")
 
   if (LLVM_FOUND)
     message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}")

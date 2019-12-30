@@ -84,6 +84,7 @@ enum
 
   /* tags */
   md_tag_names,
+  md_categories,
 
   /* entries, do not touch! */
   md_size
@@ -134,6 +135,7 @@ static void _lib_metatdata_view_init_labels()
 
   /* tags */
   _md_labels[md_tag_names] = _("tags");
+  _md_labels[md_categories] = _("categories");
 }
 
 
@@ -405,6 +407,7 @@ static void _metadata_view_update_values(dt_lib_module_t *self)
         { N_("GraphicsMagick"), 'g'},
         { N_("rawspeed"), 'r'},
         { N_("netpnm"), 'n'},
+        { N_("avif"), 'a'},
       };
 
       int loader = (unsigned int)img->loader < sizeof(loaders) / sizeof(*loaders) ? img->loader : 0;
@@ -580,26 +583,49 @@ static void _metadata_view_update_values(dt_lib_module_t *self)
 
     /* tags */
     GList *tags = NULL;
+    char *tagstring = NULL;
+    char *categoriesstring = NULL;
     if(dt_tag_get_attached(mouse_over_id, &tags, TRUE))
     {
-      char *tagstring = NULL;
       gint length = 0;
       for(GList *taglist = tags; taglist; taglist = g_list_next(taglist))
       {
         const char *tagname = ((dt_tag_t *)taglist->data)->leave;
-        length = length + strlen(tagname) + 2;
-        if(length < 45)
-          tagstring = dt_util_dstrcat(tagstring, "%s, ", tagname);
+        if (!(((dt_tag_t *)taglist->data)->flags & DT_TF_CATEGORY))
+        {
+          // tags - just keywords
+          length = length + strlen(tagname) + 2;
+          if(length < 45)
+            tagstring = dt_util_dstrcat(tagstring, "%s, ", tagname);
+          else
+          {
+            tagstring = dt_util_dstrcat(tagstring, "\n%s, ", tagname);
+            length = strlen(tagname) + 2;
+          }
+        }
         else
         {
-          tagstring = dt_util_dstrcat(tagstring, "\n%s, ", tagname);
-          length = strlen(tagname) + 2;
+          // categories - needs parent category to make sense
+          char *category = g_strdup(((dt_tag_t *)taglist->data)->tag);
+          char *catend = g_strrstr(category, "|");
+          if (catend)
+          {
+            catend[0] = '\0';
+            char *catstart = g_strrstr(category, "|");
+            catstart = catstart ? catstart + 1 : category;
+            categoriesstring = dt_util_dstrcat(categoriesstring, categoriesstring ? "\n%s: %s " : "%s: %s ",
+                  catstart, ((dt_tag_t *)taglist->data)->leave);
+          }
+          else
+            categoriesstring = dt_util_dstrcat(categoriesstring, categoriesstring ? "\n%s" : "%s",
+                  ((dt_tag_t *)taglist->data)->leave);
+          g_free(category);
         }
       }
       if(tagstring) tagstring[strlen(tagstring)-2] = '\0';
-      _metadata_update_value(d->metadata[md_tag_names], tagstring);
     }
-    else _metadata_update_value(d->metadata[md_tag_names], NODATA_STRING);
+    _metadata_update_value(d->metadata[md_tag_names], tagstring ? tagstring : NODATA_STRING);
+    _metadata_update_value(d->metadata[md_categories], categoriesstring ? categoriesstring : NODATA_STRING);
 
     dt_tag_free_result(&tags);
 
@@ -727,6 +753,10 @@ void gui_init(dt_lib_module_t *self)
   /* signup for develop initialize to update info of current
      image in darkroom when enter */
   dt_control_signal_connect(darktable.signals, DT_SIGNAL_DEVELOP_INITIALIZE,
+                            G_CALLBACK(_mouse_over_image_callback), self);
+
+  /* signup for tags changes */
+  dt_control_signal_connect(darktable.signals, DT_SIGNAL_TAG_CHANGED,
                             G_CALLBACK(_mouse_over_image_callback), self);
 }
 

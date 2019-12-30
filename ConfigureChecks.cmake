@@ -1,10 +1,20 @@
 include(CheckCSourceCompiles)
 include(TestBigEndian)
+include(CheckIncludeFile)
+include(CheckSymbolExists)
+include(CheckStructHasMember)
+
+check_include_file(cpuid.h HAVE_CPUID_H)
+
+if (HAVE_CPUID_H)
+    check_symbol_exists(__get_cpuid "cpuid.h" HAVE___GET_CPUID)
+endif()
 
 if (OpenMP_FOUND)
 
 set(CMAKE_REQUIRED_FLAGS ${OpenMP_C_FLAGS})
 set(CMAKE_REQUIRED_LIBRARIES ${OpenMP_C_LIBRARIES})
+set(CMAKE_REQUIRED_INCLUDES ${OpenMP_C_INCLUDE_DIRS})
 check_c_source_compiles("
 #include <omp.h>
 
@@ -28,7 +38,29 @@ int main(void)
 
 set(CMAKE_REQUIRED_FLAGS)
 set(CMAKE_REQUIRED_LIBRARIES)
+set(CMAKE_REQUIRED_INCLUDES)
 endif()
+
+#
+# Check for pthread struct members
+#
+set(CMAKE_REQUIRED_FLAGS ${THREADS_PREFER_PTHREAD_FLAG})
+set(CMAKE_REQUIRED_LIBRARIES ${CMAKE_THREAD_LIBS_INIT})
+
+check_struct_has_member("struct __pthread_rwlock_arch_t"
+                        "__readers"
+                        "pthread.h"
+                        HAVE_THREAD_RWLOCK_ARCH_T_READERS
+                        LANGUAGE C)
+
+check_struct_has_member("struct __pthread_rwlock_arch_t"
+                        "__nr_readers"
+                        "pthread.h"
+                        HAVE_THREAD_RWLOCK_ARCH_T_NR_READERS
+                        LANGUAGE C)
+
+unset(CMAKE_REQUIRED_FLAGS)
+unset(CMAKE_REQUIRED_LIBRARIES)
 
 set(CMAKE_REQUIRED_INCLUDES ${CMAKE_CURRENT_SOURCE_DIR})
 

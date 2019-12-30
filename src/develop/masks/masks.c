@@ -228,6 +228,12 @@ GSList *dt_masks_mouse_actions(dt_masks_form_t *form)
 
     a = (dt_mouse_action_t *)calloc(1, sizeof(dt_mouse_action_t));
     a->action = DT_MOUSE_ACTION_SCROLL;
+    g_strlcpy(a->name, _("[GRADIENT] change curvature"), sizeof(a->name));
+    lm = g_slist_append(lm, a);
+
+    a = (dt_mouse_action_t *)calloc(1, sizeof(dt_mouse_action_t));
+    a->key.accel_mods = GDK_SHIFT_MASK;
+    a->action = DT_MOUSE_ACTION_SCROLL;
     g_strlcpy(a->name, _("[GRADIENT] change compression"), sizeof(a->name));
     lm = g_slist_append(lm, a);
 
@@ -315,15 +321,24 @@ static void _set_hinter_message(dt_masks_form_gui_t *gui, const dt_masks_form_t 
 
   int ftype = form->type;
 
-  if(!(ftype & DT_MASKS_GROUP) || gui->group_edited < 0) return;
+  dt_masks_type_t formtype;
+  int opacity = 100;
 
-  // we get the selected form
-  const dt_masks_point_group_t *fpt = (dt_masks_point_group_t *)g_list_nth_data(form->points, gui->group_edited);
-  const dt_masks_form_t *sel = dt_masks_get_from_id(darktable.develop, fpt->formid);
-  if(!sel) return;
+  if((ftype & DT_MASKS_GROUP) && (gui->group_edited >= 0))
+  {
+    // we get the selected form
+    const dt_masks_point_group_t *fpt = (dt_masks_point_group_t *)g_list_nth_data(form->points, gui->group_edited);
+    const dt_masks_form_t *sel = dt_masks_get_from_id(darktable.develop, fpt->formid);
+    if(!sel) return;
 
-  const dt_masks_type_t formtype = sel->type;
-  const int opacity = _get_opacity(gui, form);
+    formtype = sel->type;
+    opacity = _get_opacity(gui, form);
+  }
+  else
+  {
+    formtype = form->type;
+    opacity = (int)(dt_conf_get_float("plugins/darkroom/masks/opacity") * 100);
+  }
 
   if(formtype & DT_MASKS_PATH)
   {
@@ -340,8 +355,11 @@ static void _set_hinter_message(dt_masks_form_gui_t *gui, const dt_masks_form_t 
   }
   else if(formtype & DT_MASKS_GRADIENT)
   {
-    if(gui->form_selected)
-      g_snprintf(msg, sizeof(msg), _("ctrl+scroll to set shape opacity (%d%%)"), opacity);
+    if(gui->creation)
+      g_snprintf(msg, sizeof(msg),
+                 _("shift+scroll to change compression\nctrl+scroll to set opacity (%d%%)"), opacity);
+    else if(gui->form_selected)
+      g_snprintf(msg, sizeof(msg), _("scroll to set curvature, shift+scroll to change compression\nctrl+scroll to set shape opacity (%d%%)"), opacity);
     else if(gui->pivot_selected)
       g_strlcat(msg, _("move to rotate shape"), sizeof(msg));
   }
@@ -420,9 +438,9 @@ void dt_masks_form_gui_points_free(gpointer data)
 
   dt_masks_form_gui_points_t *gpt = (dt_masks_form_gui_points_t *)data;
 
-  free(gpt->points);
-  free(gpt->border);
-  free(gpt->source);
+  dt_free_align(gpt->points);
+  dt_free_align(gpt->border);
+  dt_free_align(gpt->source);
   free(gpt);
 }
 
@@ -434,11 +452,11 @@ void dt_masks_gui_form_remove(dt_masks_form_t *form, dt_masks_form_gui_t *gui, i
   if(gpt)
   {
     gpt->points_count = gpt->border_count = gpt->source_count = 0;
-    free(gpt->points);
+    dt_free_align(gpt->points);
     gpt->points = NULL;
-    free(gpt->border);
+    dt_free_align(gpt->border);
     gpt->border = NULL;
-    free(gpt->source);
+    dt_free_align(gpt->source);
     gpt->source = NULL;
   }
 }
@@ -579,7 +597,7 @@ void dt_masks_gui_form_save_creation(dt_develop_t *dev, dt_iop_module_t *module,
     grpt->parentid = grpid;
     grpt->state = DT_MASKS_STATE_SHOW | DT_MASKS_STATE_USE;
     if(g_list_length(grp->points) > 0) grpt->state |= DT_MASKS_STATE_UNION;
-    grpt->opacity = 1.0f;
+    grpt->opacity = dt_conf_get_float("plugins/darkroom/masks/opacity");
     grp->points = g_list_append(grp->points, grpt);
     // we save the group
     dt_dev_add_masks_history_item(dev, module, TRUE);
@@ -722,12 +740,13 @@ int dt_masks_get_points_border(dt_develop_t *dev, dt_masks_form_t *form, float *
   else if(form->type & DT_MASKS_GRADIENT)
   {
     dt_masks_point_gradient_t *gradient = (dt_masks_point_gradient_t *)(g_list_first(form->points)->data);
-    if(dt_gradient_get_points(dev, gradient->anchor[0], gradient->anchor[1], gradient->rotation, points,
-                              points_count))
+    if(dt_gradient_get_points(dev, gradient->anchor[0], gradient->anchor[1], gradient->rotation, gradient->curvature,
+                              points, points_count))
     {
       if(border)
         return dt_gradient_get_points_border(dev, gradient->anchor[0], gradient->anchor[1],
-                                             gradient->rotation, gradient->compression, border, border_count);
+                                             gradient->rotation, gradient->compression, gradient->curvature,
+                                             border, border_count);
       else
         return 1;
     }
@@ -1136,6 +1155,32 @@ static int dt_masks_legacy_params_v3_to_v4(dt_develop_t *dev, void *params)
 }
 
 
+static int dt_masks_legacy_params_v4_to_v5(dt_develop_t *dev, void *params)
+{
+  /*
+   * difference affecting gradient
+   * up to v4: only linear gradient (relative to input image)
+   * after v5: curved gradients
+   */
+
+  dt_masks_form_t *m = (dt_masks_form_t *)params;
+
+  GList *p = g_list_first(m->points);
+
+  if(!p) return 1;
+
+  if(m->type & DT_MASKS_GRADIENT)
+  {
+    dt_masks_point_gradient_t *gradient = (dt_masks_point_gradient_t *)p->data;
+    gradient->curvature = 0.0f;
+  }
+
+  m->version = 5;
+
+  return 0;
+}
+
+
 int dt_masks_legacy_params(dt_develop_t *dev, void *params, const int old_version, const int new_version)
 {
   int res = 1;
@@ -1146,20 +1191,27 @@ int dt_masks_legacy_params(dt_develop_t *dev, void *params, const int old_versio
   }
 #endif
 
-  if(old_version == 1 && new_version == 4)
+  if(old_version == 1 && new_version == 5)
   {
     res = dt_masks_legacy_params_v1_to_v2(dev, params);
     if(!res) res = dt_masks_legacy_params_v2_to_v3(dev, params);
     if(!res) res = dt_masks_legacy_params_v3_to_v4(dev, params);
+    if(!res) res = dt_masks_legacy_params_v4_to_v5(dev, params);
   }
-  else if(old_version == 2 && new_version == 4)
+  else if(old_version == 2 && new_version == 5)
   {
     res = dt_masks_legacy_params_v2_to_v3(dev, params);
     if(!res) res = dt_masks_legacy_params_v3_to_v4(dev, params);
+    if(!res) res = dt_masks_legacy_params_v4_to_v5(dev, params);
   }
-  else if(old_version == 3 && new_version == 4)
+  else if(old_version == 3 && new_version == 5)
   {
     res = dt_masks_legacy_params_v3_to_v4(dev, params);
+    if(!res) res = dt_masks_legacy_params_v4_to_v5(dev, params);
+  }
+  else if(old_version == 4 && new_version == 5)
+  {
+    res = dt_masks_legacy_params_v4_to_v5(dev, params);
   }
 
   return res;
@@ -1631,6 +1683,16 @@ int dt_masks_events_mouse_scrolled(struct dt_iop_module_t *module, double x, dou
   else if(form->type & DT_MASKS_BRUSH)
     ret = dt_brush_events_mouse_scrolled(module, pzx, pzy, up, state, form, 0, gui, 0);
 
+  if(gui->creation && (state & GDK_CONTROL_MASK) == GDK_CONTROL_MASK)
+  {
+    float opacity = dt_conf_get_float("plugins/darkroom/masks/opacity");
+    float amount = 0.05f;
+    if(!up) amount = -amount;
+
+    opacity = CLAMP(opacity + amount, 0.0f, 1.0f);
+    dt_conf_set_float("plugins/darkroom/masks/opacity", opacity);
+  }
+
   if(gui) _set_hinter_message(gui, form);
 
   return ret;
@@ -1738,11 +1800,14 @@ void dt_masks_reset_form_gui(void)
 {
   dt_masks_change_form_gui(NULL);
   dt_iop_module_t *m = darktable.develop->gui_module;
-  if(m && (m->flags() & IOP_FLAGS_SUPPORTS_BLENDING) && !(m->flags() & IOP_FLAGS_NO_MASKS))
+  if(m && (m->flags() & IOP_FLAGS_SUPPORTS_BLENDING) && !(m->flags() & IOP_FLAGS_NO_MASKS)
+    && m->blend_data)
   {
     dt_iop_gui_blend_data_t *bd = (dt_iop_gui_blend_data_t *)m->blend_data;
     bd->masks_shown = DT_MASKS_EDIT_OFF;
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(bd->masks_edit), 0);
+    for(int n = 0; n < DEVELOP_MASKS_NB_SHAPES; n++)
+      gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(bd->masks_shapes[n]), 0);
   }
 }
 
@@ -1753,13 +1818,18 @@ void dt_masks_reset_show_masks_icons(void)
   while(modules)
   {
     dt_iop_module_t *m = (dt_iop_module_t *)modules->data;
-    if((m->flags() & IOP_FLAGS_SUPPORTS_BLENDING) && !(m->flags() & IOP_FLAGS_NO_MASKS))
+    if(m && (m->flags() & IOP_FLAGS_SUPPORTS_BLENDING) && !(m->flags() & IOP_FLAGS_NO_MASKS))
     {
       dt_iop_gui_blend_data_t *bd = (dt_iop_gui_blend_data_t *)m->blend_data;
-      if(!bd) break;
+      if(!bd) break;  // TODO: this doesn't look right. Why do we break the while look as soon as one module has no blend_data?
       bd->masks_shown = DT_MASKS_EDIT_OFF;
       gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(bd->masks_edit), FALSE);
       gtk_widget_queue_draw(bd->masks_edit);
+      for(int n = 0; n < DEVELOP_MASKS_NB_SHAPES; n++)
+      {
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(bd->masks_shapes[n]), 0);
+        gtk_widget_queue_draw(bd->masks_shapes[n]);
+      }
     }
     modules = g_list_next(modules);
   }
@@ -2300,13 +2370,10 @@ void dt_masks_form_change_opacity(dt_masks_form_t *form, int parentid, int up)
     dt_masks_point_group_t *fpt = (dt_masks_point_group_t *)fpts->data;
     if(fpt->formid == id)
     {
-      const float nv = fpt->opacity + amount;
-      if(nv <= 1.0f && nv >= 0.0f)
-      {
-        fpt->opacity = nv;
-        dt_dev_add_masks_history_item(darktable.develop, NULL, TRUE);
-        dt_masks_update_image(darktable.develop);
-      }
+      const float opacity = CLAMP(fpt->opacity + amount, 0.0f, 1.0f);
+      fpt->opacity = opacity;
+      dt_dev_add_masks_history_item(darktable.develop, NULL, TRUE);
+      dt_masks_update_image(darktable.develop);
       break;
     }
     fpts = g_list_next(fpts);
@@ -2382,7 +2449,7 @@ dt_masks_point_group_t *dt_masks_group_add_form(dt_masks_form_t *grp, dt_masks_f
     grpt->parentid = grp->formid;
     grpt->state = DT_MASKS_STATE_SHOW | DT_MASKS_STATE_USE;
     if(g_list_length(grp->points) > 0) grpt->state |= DT_MASKS_STATE_UNION;
-    grpt->opacity = 1.0f;
+    grpt->opacity = dt_conf_get_float("plugins/darkroom/masks/opacity");
     grp->points = g_list_append(grp->points, grpt);
     return grpt;
   }
@@ -2543,6 +2610,7 @@ void dt_masks_update_image(dt_develop_t *dev)
   // invalidate buffers and force redraw of darkroom
   dev->pipe->changed |= DT_DEV_PIPE_SYNCH;
   dev->preview_pipe->changed |= DT_DEV_PIPE_SYNCH;
+  dev->preview2_pipe->changed |= DT_DEV_PIPE_SYNCH;
   dt_dev_invalidate_all(dev);
 }
 

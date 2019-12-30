@@ -93,10 +93,10 @@ basicadj(read_only image2d_t in, write_only image2d_t out, const int width, cons
            const float black_point, const float scale,
            const int process_gamma, const float gamma,
            const int plain_contrast, const int preserve_colors, const float contrast,
-           const int process_saturation, const float saturation,
+           const int process_saturation_vibrance, const float saturation, const float vibrance,
            const int process_hlcompr, const float hlcomp, const float hlrange,
            const float middle_grey, const float inv_middle_grey,
-           global const dt_colorspaces_iccprofile_info_cl_t *profile_info, read_only image2d_t lut,
+           constant dt_colorspaces_iccprofile_info_cl_t *profile_info, read_only image2d_t lut,
            const int use_work_profile)
 {
   const int x = get_global_id(0);
@@ -113,7 +113,7 @@ basicadj(read_only image2d_t in, write_only image2d_t out, const int width, cons
   // highlight compression
   if(process_hlcompr)
   {
-    const float lum = (use_work_profile == 0) ? dt_camera_rgb_luminance(pixel): get_rgb_matrix_luminance(pixel, profile_info, lut);
+    const float lum = (use_work_profile == 0) ? dt_camera_rgb_luminance(pixel): get_rgb_matrix_luminance(pixel, profile_info, profile_info->matrix_in, lut);
     if(lum > 0.f)
     {
       const float ratio = hlcurve(lum, hlcomp, hlrange);
@@ -152,11 +152,12 @@ basicadj(read_only image2d_t in, write_only image2d_t out, const int width, cons
   }
 
   // saturation
-  if(process_saturation)
+  if(process_saturation_vibrance)
   {
-    const float luminance = (use_work_profile == 0) ? dt_camera_rgb_luminance(pixel): get_rgb_matrix_luminance(pixel, profile_info, lut);
-
-    pixel = luminance + saturation * (pixel - luminance);
+    const float average = (pixel.x + pixel.y + pixel.z) / 3;
+    const float delta = fast_length(pixel - average);
+    const float P = vibrance * (1 - native_powr(delta, fabs(vibrance)));
+    pixel = average + (saturation + P) * (pixel - average);
   }
 
   pixel.w = w;

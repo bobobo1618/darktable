@@ -120,7 +120,8 @@ static int usage(const char *argv0)
   printf("  --conf <key>=<value>\n");
   printf("  --configdir <user config directory>\n");
   printf("  -d {all,cache,camctl,camsupport,control,dev,fswatch,input,lighttable,\n");
-  printf("      lua, masks,memory,nan,opencl,perf,pwstorage,print,sql}\n");
+  printf("      lua, masks,memory,nan,opencl,perf,pwstorage,print,sql,ioporder\n");
+  printf("      imageio\n");
   printf("  --datadir <data directory>\n");
 #ifdef HAVE_OPENCL
   printf("  --disable-opencl\n");
@@ -432,8 +433,15 @@ int dt_init(int argc, char *argv[], const gboolean init_gui, const gboolean load
   darktable.progname = argv[0];
 
   // FIXME: move there into dt_database_t
-  dt_pthread_mutex_init(&(darktable.db_insert), NULL);
+  pthread_mutexattr_t recursive_locking;
+  pthread_mutexattr_init(&recursive_locking);
+  pthread_mutexattr_settype(&recursive_locking, PTHREAD_MUTEX_RECURSIVE);
+  for (int k=0; k<DT_IMAGE_DBLOCKS; k++)
+  {
+    dt_pthread_mutex_init(&(darktable.db_image[k]),&(recursive_locking));
+  }
   dt_pthread_mutex_init(&(darktable.plugin_threadsafe), NULL);
+  dt_pthread_mutex_init(&(darktable.dev_threadsafe), NULL);
   dt_pthread_mutex_init(&(darktable.capabilities_threadsafe), NULL);
   dt_pthread_mutex_init(&(darktable.exiv2_threadsafe), NULL);
   dt_pthread_mutex_init(&(darktable.readFile_mutex), NULL);
@@ -633,7 +641,11 @@ int dt_init(int argc, char *argv[], const gboolean init_gui, const gboolean load
           darktable.unmuted |= DT_DEBUG_PRINT; // print errors are reported on console
         else if(!strcmp(argv[k + 1], "camsupport"))
           darktable.unmuted |= DT_DEBUG_CAMERA_SUPPORT; // camera support warnings are reported on console
-        else
+        else if(!strcmp(argv[k + 1], "ioporder"))
+          darktable.unmuted |= DT_DEBUG_IOPORDER; // iop order information are reported on console
+        else if(!strcmp(argv[k + 1], "imageio")) {
+          darktable.unmuted |= DT_DEBUG_IMAGEIO; // image importing or exporting mesages on console
+        } else
           return usage(argv[0]);
         k++;
         argv[k-1] = NULL;
@@ -693,6 +705,13 @@ int dt_init(int argc, char *argv[], const gboolean init_gui, const gboolean load
         argv[k] = NULL;
         break;
       }
+#ifdef __APPLE__
+      else if(!strncmp(argv[k], "-psn_", 5))
+      {
+        // "-psn_*" argument is added automatically by macOS and should be ignored
+        argv[k] = NULL;
+      }
+#endif
       else
         return usage(argv[0]); // fail on unrecognized options
     }
@@ -840,6 +859,7 @@ int dt_init(int argc, char *argv[], const gboolean init_gui, const gboolean load
 
       if(!image_loaded_elsewhere) dt_database_show_error(darktable.db);
     }
+    fprintf(stderr, "ERROR: can't acquire database lock, aborting.\n");
     return 1;
   }
 
@@ -919,7 +939,11 @@ int dt_init(int argc, char *argv[], const gboolean init_gui, const gboolean load
   if(init_gui)
   {
     darktable.gui = (dt_gui_gtk_t *)calloc(1, sizeof(dt_gui_gtk_t));
-    if(dt_gui_gtk_init(darktable.gui)) return 1;
+    if(dt_gui_gtk_init(darktable.gui))
+    {
+      fprintf(stderr, "ERROR: can't init gui, aborting.\n");
+      return 1;
+    }
     dt_bauhaus_init();
   }
   else
@@ -929,7 +953,11 @@ int dt_init(int argc, char *argv[], const gboolean init_gui, const gboolean load
   dt_view_manager_init(darktable.view_manager);
 
   // check whether we were able to load darkroom view. if we failed, we'll crash everywhere later on.
-  if(!darktable.develop) return 1;
+  if(!darktable.develop)
+  {
+    fprintf(stderr, "ERROR: can't init develop system, aborting.\n");
+    return 1;
+  }
 
   darktable.imageio = (dt_imageio_t *)calloc(1, sizeof(dt_imageio_t));
   dt_imageio_init(darktable.imageio);
@@ -941,7 +969,11 @@ int dt_init(int argc, char *argv[], const gboolean init_gui, const gboolean load
   // load the darkroom mode plugins once:
   dt_iop_load_modules_so();
   // check if all modules have a iop order assigned
-  if(dt_ioppr_check_so_iop_order(darktable.iop, darktable.iop_order_list)) return 1;
+  if(dt_ioppr_check_so_iop_order(darktable.iop, darktable.iop_order_list))
+  {
+    fprintf(stderr, "ERROR: iop order looks bad, aborting.\n");
+    return 1;
+  }
 
   if(init_gui)
   {
@@ -1130,8 +1162,12 @@ void dt_cleanup()
 
   dt_capabilities_cleanup();
 
-  dt_pthread_mutex_destroy(&(darktable.db_insert));
+  for (int k=0; k<DT_IMAGE_DBLOCKS; k++)
+  {
+    dt_pthread_mutex_destroy(&(darktable.db_image[k]));
+  }
   dt_pthread_mutex_destroy(&(darktable.plugin_threadsafe));
+  dt_pthread_mutex_destroy(&(darktable.dev_threadsafe));
   dt_pthread_mutex_destroy(&(darktable.capabilities_threadsafe));
   dt_pthread_mutex_destroy(&(darktable.exiv2_threadsafe));
   dt_pthread_mutex_destroy(&(darktable.readFile_mutex));
@@ -1166,16 +1202,30 @@ void dt_gettime(char *datetime, size_t datetime_len)
 
 void *dt_alloc_align(size_t alignment, size_t size)
 {
+  const size_t aligned_size = dt_round_size(size, alignment);
 #if defined(__FreeBSD_version) && __FreeBSD_version < 700013
-  return malloc(size);
+  return malloc(aligned_size);
 #elif defined(_WIN32)
-  return _aligned_malloc(size, alignment);
+  return _aligned_malloc(aligned_size, alignment);
 #else
   void *ptr = NULL;
-  if(posix_memalign(&ptr, alignment, size)) return NULL;
+  if(posix_memalign(&ptr, alignment, aligned_size)) return NULL;
   return ptr;
 #endif
 }
+
+size_t dt_round_size(const size_t size, const size_t alignment)
+{
+  // Round the size of a buffer to the closest higher multiple
+  return ((size % alignment) == 0) ? size : ((size - 1) / alignment + 1) * alignment;
+}
+
+size_t dt_round_size_sse(const size_t size)
+{
+  // Round the size of a buffer to the closest 64 higher multiple
+  return dt_round_size(size, 64);
+}
+
 
 #ifdef _WIN32
 void dt_free_align(void *mem)

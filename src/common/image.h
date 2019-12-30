@@ -71,9 +71,11 @@ typedef enum
   // image is a bayer pattern with 4 colors (e.g., CYGM or RGBE)
   DT_IMAGE_4BAYER = 16384,
   // image was detected as monochrome
-  DT_IMAGE_MONOCHROME = 32768, 
+  DT_IMAGE_MONOCHROME = 32768,
   // image has usercrop information
   DT_IMAGE_HAS_USERCROP = 65536,
+  // image is an sraw
+  DT_IMAGE_S_RAW = 1 << 17,
 } dt_image_flags_t;
 
 typedef enum dt_image_colorspace_t
@@ -88,6 +90,18 @@ typedef struct dt_image_raw_parameters_t
   unsigned legacy : 24;
   unsigned user_flip : 8; // +8 = 32 bits.
 } dt_image_raw_parameters_t;
+
+typedef enum dt_exif_image_orientation_t
+{
+  EXIF_ORIENTATION_NONE              = 1,
+  EXIF_ORIENTATION_FLIP_HORIZONTALLY = 2,
+  EXIF_ORIENTATION_FLIP_VERTICALLY   = 4,
+  EXIF_ORIENTATION_ROTATE_180_DEG    = 3,
+  EXIF_ORIENTATION_TRANSPOSE         = 5,
+  EXIF_ORIENTATION_ROTATE_CCW_90_DEG = 8,
+  EXIF_ORIENTATION_ROTATE_CW_90_DEG  = 6,
+  EXIF_ORIENTATION_TRANSVERSE        = 7
+} dt_exif_image_orientation_t;
 
 typedef enum dt_image_orientation_t
 {
@@ -120,6 +134,7 @@ typedef enum dt_image_loader_t
   LOADER_GM = 8,
   LOADER_RAWSPEED = 9,
   LOADER_PNM = 10,
+  LOADER_AVIF = 11,
 } dt_image_loader_t;
 
 typedef struct dt_image_geoloc_t
@@ -159,6 +174,7 @@ typedef struct dt_image_t
   // to understand this, look at comment for dt_histogram_roi_t
   int32_t width, height, verified_size, final_width, final_height;
   int32_t crop_x, crop_y, crop_width, crop_height;
+  float aspect_ratio;
 
   // used by library
   int32_t num, flags, film_id, id, group_id, version;
@@ -207,6 +223,10 @@ int dt_image_is_raw(const dt_image_t *img);
 int dt_image_is_hdr(const dt_image_t *img);
 /** returns non-zero if this image was taken using a monochrome camera */
 int dt_image_is_monochrome(const dt_image_t *img);
+/** returns non-zero if the image supports a color correction matrix */
+int dt_image_is_matrix_correction_supported(const dt_image_t *img);
+/** returns non-zero if the image supports the rawprepare module */
+int dt_image_is_rawprepare_supported(const dt_image_t *img);
 /** returns the full path name where the image was imported from. from_cache=TRUE check and return local
  * cached filename if any. */
 void dt_image_full_path(const int imgid, char *pathname, size_t pathname_len, gboolean *from_cache);
@@ -244,17 +264,19 @@ dt_image_orientation_t dt_image_get_orientation(const int imgid);
 gboolean dt_image_get_final_size(const int32_t imgid, int *width, int *height);
 void dt_image_reset_final_size(const int32_t imgid);
 /** set image location lon/lat */
-void dt_image_set_location(const int32_t imgid, dt_image_geoloc_t *geoloc);
+void dt_image_set_location(const int32_t imgid, dt_image_geoloc_t *geoloc, const gboolean undo_on, const gboolean group_on);
 /** get image location lon/lat */
 void dt_image_get_location(const int32_t imgid, dt_image_geoloc_t *geoloc);
-/** set image location lon/lat/ele */
-void dt_image_set_location_and_elevation(const int32_t imgid, dt_image_geoloc_t *geoloc);
 /** returns 1 if there is history data found for this image, 0 else. */
 int dt_image_altered(const uint32_t imgid);
 /** set the image final/cropped aspect ratio */
 double dt_image_set_aspect_ratio(const int32_t imgid);
+/** set the image raw aspect ratio */
+void dt_image_set_raw_aspect_ratio(const int32_t imgid);
 /** set the image final/cropped aspect ratio */
 void dt_image_set_aspect_ratio_to(const int32_t imgid, double aspect_ratio);
+/** set the image final/cropped aspect ratio if different from stored*/
+void dt_image_set_aspect_ratio_if_different(const int32_t imgid, double aspect_ratio);
 /** reset the image final/cropped aspect ratio to 0.0 */
 void dt_image_reset_aspect_ratio(const int32_t imgid);
 /** returns the orientation bits of the image from exif. */
@@ -268,21 +290,21 @@ static inline dt_image_orientation_t dt_image_orientation_to_flip_bits(const int
 {
   switch(orient)
   {
-    case 1:
+    case EXIF_ORIENTATION_NONE:
       return ORIENTATION_NONE;
-    case 2:
+    case EXIF_ORIENTATION_FLIP_HORIZONTALLY:
       return ORIENTATION_FLIP_HORIZONTALLY;
-    case 3:
+    case EXIF_ORIENTATION_ROTATE_180_DEG:
       return ORIENTATION_ROTATE_180_DEG;
-    case 4:
+    case EXIF_ORIENTATION_FLIP_VERTICALLY:
       return ORIENTATION_FLIP_VERTICALLY;
-    case 5:
+    case EXIF_ORIENTATION_TRANSPOSE:
       return ORIENTATION_TRANSPOSE;
-    case 6:
+    case EXIF_ORIENTATION_ROTATE_CW_90_DEG:
       return ORIENTATION_ROTATE_CW_90_DEG;
-    case 7:
+    case EXIF_ORIENTATION_TRANSVERSE:
       return ORIENTATION_TRANSVERSE;
-    case 8:
+    case EXIF_ORIENTATION_ROTATE_CCW_90_DEG:
       return ORIENTATION_ROTATE_CCW_90_DEG;
     default:
       return ORIENTATION_NONE;
@@ -312,6 +334,8 @@ void dt_image_local_copy_synch(void);
 void dt_image_write_sidecar_file(int imgid);
 void dt_image_synch_xmp(const int selected);
 void dt_image_synch_all_xmp(const gchar *pathname);
+// return the iop-order-version used by imgid (0 if unknown iop-order-version)
+int dt_image_get_iop_order_version(const int32_t imgid);
 
 // add an offset to the exif_datetime_taken field
 void dt_image_add_time_offset(const int imgid, const long int offset);

@@ -1534,6 +1534,8 @@ void cleanup(dt_iop_module_t *module)
 {
   free(module->params);
   module->params = NULL;
+  free(module->default_params);
+  module->default_params = NULL;
   free(module->global_data); // just to be sure
   module->global_data = NULL;
 }
@@ -1543,7 +1545,7 @@ void commit_params(struct dt_iop_module_t *self, dt_iop_params_t *params, dt_dev
                    dt_dev_pixelpipe_iop_t *piece)
 {
   dt_image_t *img = &pipe->image;
-  if(!(img->flags & DT_IMAGE_RAW) || dt_image_is_monochrome(img)) piece->enabled = 0;
+  if(!dt_image_is_raw(img) || dt_image_is_monochrome(img)) piece->enabled = 0;
 }
 
 void init_pipe(struct dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, dt_dev_pixelpipe_iop_t *piece)

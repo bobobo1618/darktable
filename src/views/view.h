@@ -73,6 +73,14 @@ typedef enum dt_lighttable_layout_t
   DT_LIGHTTABLE_LAYOUT_LAST = 3
 } dt_lighttable_layout_t;
 
+typedef enum dt_darkroom_layout_t
+{
+  DT_DARKROOM_LAYOUT_FIRST = -1,
+  DT_DARKROOM_LAYOUT_EDITING = 0,
+  DT_DARKROOM_LAYOUT_COLOR_ASSESMENT = 1,
+  DT_DARKROOM_LAYOUT_LAST = 3
+} dt_darkroom_layout_t;
+
 // flags for culling zoom mode
 typedef enum dt_lighttable_culling_zoom_mode_t
 {
@@ -189,12 +197,13 @@ typedef struct dt_view_image_expose_t
   dt_view_image_over_t *image_over;
   uint32_t imgid;
   cairo_t *cr;
-  int32_t width;
-  int32_t height;
+  float width;
+  float height;
   int32_t zoom;
   int32_t px;
   int32_t py;
   gboolean full_preview;
+  gboolean filmstrip;
   gboolean image_only;
   gboolean no_deco;
   gboolean mouse_over;
@@ -317,6 +326,13 @@ typedef struct dt_view_manager_t
       int32_t (*activated_image)(struct dt_lib_module_t *);
       GtkWidget *(*widget)(struct dt_lib_module_t *);
     } filmstrip;
+
+    /* darkroom view proxy object */
+    struct
+    {
+      struct dt_view_t *view;
+      dt_darkroom_layout_t (*get_layout)(struct dt_view_t *view);
+    } darkroom;
 
     /* lighttable view proxy object */
     struct
@@ -458,6 +474,8 @@ int32_t dt_view_filmstrip_get_activated_imgid(dt_view_manager_t *vm);
 
 /** get the lighttable current layout */
 dt_lighttable_layout_t dt_view_lighttable_get_layout(dt_view_manager_t *vm);
+/** get the darkroom current layout */
+dt_darkroom_layout_t dt_view_darkroom_get_layout(dt_view_manager_t *vm);
 /** get the lighttable full preview state */
 gboolean dt_view_lighttable_preview_state(dt_view_manager_t *vm);
 /** sets the lighttable image in row zoom */

@@ -36,6 +36,7 @@
 #include "gui/draw.h"
 #include "gui/color_picker_proxy.h"
 #include "gui/gtk.h"
+#include "gui/accelerators.h"
 #include "gui/presets.h"
 #include "iop/iop_api.h"
 
@@ -129,6 +130,22 @@ int flags()
 int default_colorspace(dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, dt_dev_pixelpipe_iop_t *piece)
 {
   return iop_cs_Lab;
+}
+
+void init_key_accels(dt_iop_module_so_t *self)
+{
+  dt_accel_register_slider_iop(self, FALSE, NC_("accel", "black"));
+  dt_accel_register_slider_iop(self, FALSE, NC_("accel", "gray"));
+  dt_accel_register_slider_iop(self, FALSE, NC_("accel", "white"));
+}
+
+void connect_key_accels(dt_iop_module_t *self)
+{
+  dt_iop_levels_gui_data_t *g = (dt_iop_levels_gui_data_t *)self->gui_data;
+
+  dt_accel_connect_slider_iop(self, "black", GTK_WIDGET(g->percentile_black));
+  dt_accel_connect_slider_iop(self, "gray", GTK_WIDGET(g->percentile_grey));
+  dt_accel_connect_slider_iop(self, "white", GTK_WIDGET(g->percentile_white));
 }
 
 int legacy_params(dt_iop_module_t *self, const void *const old_params, const int old_version,
@@ -642,6 +659,8 @@ void cleanup(dt_iop_module_t *self)
 {
   free(self->params);
   self->params = NULL;
+  free(self->default_params);
+  self->default_params = NULL;
 }
 
 void gui_init(dt_iop_module_t *self)
@@ -707,20 +726,15 @@ void gui_init(dt_iop_module_t *self)
 
   c->blackpick = dtgtk_togglebutton_new(dtgtk_cairo_paint_colorpicker, CPF_STYLE_FLAT, NULL);
   gtk_widget_set_tooltip_text(c->blackpick, _("pick black point from image"));
+  gtk_widget_set_name(GTK_WIDGET(c->blackpick), "picker-black");
 
   c->greypick = dtgtk_togglebutton_new(dtgtk_cairo_paint_colorpicker, CPF_STYLE_FLAT, NULL);
   gtk_widget_set_tooltip_text(c->greypick, _("pick medium gray point from image"));
+  gtk_widget_set_name(GTK_WIDGET(c->greypick), "picker-grey");
 
   c->whitepick = dtgtk_togglebutton_new(dtgtk_cairo_paint_colorpicker, CPF_STYLE_FLAT, NULL);
   gtk_widget_set_tooltip_text(c->whitepick, _("pick white point from image"));
-
-  GdkRGBA color = { 0 };
-  color.alpha = 1.0;
-  dtgtk_togglebutton_override_color(DTGTK_TOGGLEBUTTON(c->blackpick), &color);
-  color.red = color.green = color.blue = 0.5;
-  dtgtk_togglebutton_override_color(DTGTK_TOGGLEBUTTON(c->greypick), &color);
-  color.red = color.green = color.blue = 1.0;
-  dtgtk_togglebutton_override_color(DTGTK_TOGGLEBUTTON(c->whitepick), &color);
+  gtk_widget_set_name(GTK_WIDGET(c->whitepick), "picker-white");
 
   GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
   gtk_box_pack_start(GTK_BOX(box), GTK_WIDGET(autobutton), TRUE, TRUE, 0);

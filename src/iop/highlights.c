@@ -93,6 +93,18 @@ int default_colorspace(dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, dt_dev_p
   return iop_cs_RAW;
 }
 
+void init_key_accels(dt_iop_module_so_t *self)
+{
+  dt_accel_register_slider_iop(self, FALSE, NC_("accel", "clipping threshold"));
+}
+
+void connect_key_accels(dt_iop_module_t *self)
+{
+  dt_iop_highlights_gui_data_t *g = (dt_iop_highlights_gui_data_t *)self->gui_data;
+
+  dt_accel_connect_slider_iop(self, "clipping threshold", GTK_WIDGET(g->clip));
+}
+
 int legacy_params(dt_iop_module_t *self, const void *const old_params, const int old_version,
                   void *new_params, const int new_version)
 {
@@ -1038,11 +1050,13 @@ void reload_defaults(dt_iop_module_t *module)
   if(!module->dev) goto end;
 
   // only on for raw images:
-  if(dt_image_is_raw(&module->dev->image_storage))
+  if(dt_image_is_raw(&(module->dev->image_storage)))
     module->default_enabled = 1;
   else
+    {
     module->default_enabled = 0;
-
+      module->hide_enable_button = 1;
+    }
 end:
   memcpy(module->params, &tmp, sizeof(dt_iop_highlights_params_t));
   memcpy(module->default_params, &tmp, sizeof(dt_iop_highlights_params_t));
@@ -1053,7 +1067,6 @@ void init(dt_iop_module_t *module)
   // module->data = malloc(sizeof(dt_iop_highlights_data_t));
   module->params = calloc(1, sizeof(dt_iop_highlights_params_t));
   module->default_params = calloc(1, sizeof(dt_iop_highlights_params_t));
-  module->default_enabled = 1;
   module->params_size = sizeof(dt_iop_highlights_params_t);
   module->gui_data = NULL;
 }
@@ -1062,6 +1075,8 @@ void cleanup(dt_iop_module_t *module)
 {
   free(module->params);
   module->params = NULL;
+  free(module->default_params);
+  module->default_params = NULL;
 }
 
 void gui_init(struct dt_iop_module_t *self)

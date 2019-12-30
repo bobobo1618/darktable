@@ -25,6 +25,7 @@
 //  types that are known by the undo module
 typedef enum dt_undo_type_t
 {
+  DT_UNDO_NONE        = 0,
   DT_UNDO_GEOTAG      = 1 << 0,
   DT_UNDO_HISTORY     = 1 << 1,
   DT_UNDO_MASK        = 1 << 2,
@@ -67,7 +68,7 @@ void dt_undo_end_group(dt_undo_t *self);
 
 // record a change that will be insered into the undo list
 void dt_undo_record(dt_undo_t *self, gpointer user_data, dt_undo_type_t type, dt_undo_data_t data,
-                    void (*undo)(gpointer user_data, dt_undo_type_t type, dt_undo_data_t item, dt_undo_action_t action),
+                    void (*undo)(gpointer user_data, dt_undo_type_t type, dt_undo_data_t item, dt_undo_action_t action, GList **imgs),
                     void (*free_data)(gpointer data));
 
 //  undo an element which correspond to filter. filter here is expected to be
