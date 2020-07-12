@@ -1,6 +1,6 @@
 /*
     This file is part of darktable,
-    copyright (c) 2011 Henrik Andersson.
+    Copyright (C) 2011-2020 darktable developers.
 
     darktable is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -133,8 +133,7 @@ void gui_init(dt_lib_module_t *self)
                    G_CALLBACK(_lib_navigation_leave_notify_callback), self);
 
   /* set size of navigation draw area */
-  int panel_width = dt_conf_get_int("panel_width");
-  gtk_widget_set_size_request(self->widget, -1, panel_width * .5);
+  gtk_widget_set_size_request(self->widget, -1, 175);
   gtk_widget_set_name(GTK_WIDGET(self->widget), "navigation-module");
 
   /* connect a redraw callback to control draw all and preview pipe finish signals */
@@ -566,12 +565,12 @@ static gboolean _lib_navigation_leave_notify_callback(GtkWidget *widget, GdkEven
 
 void init_key_accels(dt_lib_module_t *self)
 {
-  dt_accel_register_lib(self, NC_("accel", "hide navigation thumbnail"), GDK_KEY_N, GDK_CONTROL_MASK | GDK_SHIFT_MASK);
+  dt_accel_register_lib_as_view("darkroom", NC_("accel", "hide navigation thumbnail"), GDK_KEY_N, GDK_CONTROL_MASK | GDK_SHIFT_MASK);
 }
 
 void connect_key_accels(dt_lib_module_t *self)
 {
-  dt_accel_connect_lib(self, "hide navigation thumbnail",
+  dt_accel_connect_lib_as_view(self,"darkroom", "hide navigation thumbnail",
                      g_cclosure_new(G_CALLBACK(_lib_navigation_collapse_callback), self, NULL));
 }
 

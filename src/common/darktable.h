@@ -1,7 +1,6 @@
 /*
     This file is part of darktable,
-    copyright (c) 2009--2012 johannes hanika.
-    copyright (c) 2010--2012 tobias ellinghaus.
+    Copyright (C) 2009-2020 darktable developers.
 
     darktable is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -39,7 +38,7 @@
 #define O_BINARY 0
 #endif
 
-#include "ThreadSafetyAnalysis.h"
+#include "external/ThreadSafetyAnalysis.h"
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -122,7 +121,7 @@ typedef unsigned int u_int;
 
 #include "common/usermanual_url.h"
 
-#define DT_MODULE_VERSION 20 // version of dt's module interface
+#define DT_MODULE_VERSION 22 // version of dt's module interface
 
 // version of current performance configuration version
 // if you want to run an updated version of the performance configuration later

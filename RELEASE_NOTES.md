@@ -39,6 +39,48 @@ making a backup is strongly advised.
 - Add a focus peaking mode in the lighttable and darkroom. The default
   key to toggle this mode is <kbd>Ctrl+Shift+F</kbd>
 
+- The wavelet denoise profile has a new Y0U0V0 mode. This new mode
+  makes it possible to denoise the chroma and luma noise in a single
+  instance.
+
+- A full rewrite of of lighttable has been done. This gives again a
+  big performance jump and will allow smooth interaction for any
+  screen resolution. At the same time the filmstrip has been reworked.
+
+  It is important to note that this speed improvement is really
+  noticeable in the zoomable lighttable view.
+
+  The culling view has also been rewritten from scratch.
+
+- A complete overhaul of the CSS has also been done. This gives darktable
+  a very professional look at this time.
+
+- The preference dialog has been fully reviewed and reorganized to propose
+  a better look and at the same time requiring less scrolling. It is also
+  possible to add some CSS rules directly into the preference dialog to
+  tweak darktable's look.
+
+- The new module negadoctor has been added to help inverting negative
+  films.
+
+- A new histogram display called RGB Parade has been added.
+
+- The metadata feature has been turned generic internally and has got new
+  features. The user can now select the information he wants to see in the
+  metadata editor. This selection is automatically mirrored in collection
+  and image information modules.
+
+  Along with a new "notes" field, all the fields are multiline
+  <kbd>Ctrl+Enter</kbd>, sizable <kbd>Ctrl+Scroll</kbd> and can be set
+  as private (not exported). Metadata collection filters have an entry
+  "not defined". At import time it is possible to avoid to import
+  some metadata.
+
+- Image change detection has been made more reliable. This affects lighttable
+  thumbnails change symbol and history collection filter.
+  In darkroom navigation, this avoids to recalculate an image and save the xmp
+  file when there is no change.
+
 ## New Features And Changes
 
 - Add darkroom loading screen.
@@ -46,7 +88,7 @@ making a backup is strongly advised.
 - Make modules labels a bit smaller for better UI consistency.
 
 - Add small rectangle around the angle display when using the
-  straightening tool for better lisibility.
+  straightening tool for better readability.
 
 - Ensure the different views layout are recorded. Many views (and mode
   like lighttable's culling or darkroom's color assessment), can have
@@ -74,7 +116,7 @@ making a backup is strongly advised.
 - Define many new accels for most of the sliders to allow more control
   using the keyboard.
 
-- Add support for curved gradients. The grandient mask can now be
+- Add support for curved gradients. The gradient mask can now be
   curved to revert fish-eye kind distortion and so become a straight
   line on the horizon for example.
 
@@ -84,6 +126,88 @@ making a backup is strongly advised.
   replacing and merging metadata.
 
 - Better visibility for the zoomed image part in the navigation widget.
+
+- Revert to smooth mode (was default in 2.6) in color zone module.
+
+- Collect module has two new filters: module and module order.
+
+- It is now possible to resize the collect module windows with
+  <kbd>Ctrl+Scroll</kbd>.
+
+- Add support for compressed Lut (.gmz) in the 3D Lut module.
+
+- Use a more natural folder order in the collect module, the latest
+  folder are now listed first.
+
+- A full rewrite of the pipe ordering has been done. It is now
+  possible to change the order of the pipe using a new module giving
+  access to the legacy order (order used up to 2.6 releases) and the
+  v3.0 order introduced with darktable 3.0 on Dec 2019. It is also
+  possible to create order presets which can be freely applied.
+
+  Note that the copy / paste of multi-instances when they have been
+  reordered in a way that some other modules are separating them will
+  not keep the same order. This was buggy in previous implementation
+  when the target image had also been reordered in a non compatible
+  manner or using a different pipe order. In this new versions all the
+  multi-instances will be grouped together keeping their relative
+  order.
+
+  Note that this work has mainly been done to make the implementation
+  simpler, safer and that will require less maintenance. Also as this
+  implementation records the full pipe order for history and styles it
+  will be the ground for proposing different strategies when applying
+  styles.
+
+- The retouch module has a new accel "show or hide shapes" which can
+  be mapped to a key for quickly show or hide shapes.
+
+- The spot removal module accel to show-hide shapes has been renamed
+  to "show or hide shapes" for clarity and to be consistent with
+  the new accel in the retouch module.
+
+- It is possible to change the color of all overlays (shapes, guides,
+  etc). This may come handy on some images where the gray guides where
+  barely visible.
+
+- In crop & rotate module, the pan movements can be restricted
+  vertically or horizontally using the <kbd>Shift</kbd> or
+  <kbd>Control</kbd> respectively.
+
+- The crop & rotate module now allows format ratios to be entered as
+  a float number.
+
+- When using a snapshot view, a flag to clearly show the position of the
+  snapshot has been added.
+
+- Improve the falloff and radius of the vignette to 200% for better
+  control.
+
+- Add a user-defined mode in the white-balance module to keep the last
+  modification of the module. It is then possible to go back to the
+  last modified setting after selecting another mode like spot.
+
+- Dynamic accelerators have been added for combo-boxes making it
+  possible to select next and previous values directly from the
+  keyboard.
+
+- It is now possible to adjust the color picker areas just after
+  having created them. This is achieved by dragging one of the 4
+  little square handles at the corner.
+
+- Tagging improvements. Entry tag(s) creation works now without image selected.
+  It is allowed to create a tag on virtual node, to insert a pipe <kbd>|</kbd>
+  character in create tag (menu). The tree display shows the newly created tags.
+
+- New variables $(LENS), $(EXIF_EXPOSURE_BIAS), $(VERSION_NAME) and
+  $(VERSION_IF_MULTI) have been defined. $(CATEGORYn(category)) works now when
+  multiple values on the same image (for example people) and accepts
+  9 levels instead of 3 (for n).
+
+- Four new timestamps are now supported to store the import,
+  last export, last change and last print times.
+
+- Multiple images drag & drop works now on map view.
 
 ## Bug fixes
 
@@ -117,9 +241,69 @@ making a backup is strongly advised.
 
 - Exports should now better respect the final dimensions requested.
 
+- Fix issues with brush opacity handling.
+
+- Better performance for computing the aspect ratio.
+
+- Fix importing of duplicates on Windows.
+
+- Fix exporting private tags issue with different settings along the path.
+
+- Better visibility of tone curve grid on Grey theme.
+
+- Better accuracy for the keystone OSD lines.
+
+- Better performance and accuracy improvements for the waveform histogram.
+
+- Some HiDPI fixes in icons.
+
+- The Facebook, Google Photo and Flickr export storage have been
+  removed as not supported anymore due to deep changes in the provider
+  making it very hard to fix.
+
+- Fix brush OSD when in zoom mode. The brushes are now keeping thin
+  lines.
+
+- Fix watermark blurring when using rotation.
+
+- Fix watermark crash when no text selected.
+
+- Fix using quote and double quote in meta-data.
+
+- Fix time-line display reporting 61 minutes per hour.
+
+- Smoother transition for gradient shapes.
+
+- Fix the snapshot rotation which could go 180° in a single click.
+
 ## Lua
 
+- API changed to 6.0.0 
 
+- facebook, flickr, and picasa removed from types.dt_imageio_storage_module_t.
+
+- piwigo added to type.dt_imageio_storage_module_t.
+
+- notes and version_name metadata fields added to types.dt_lua_image_t data type.
+
+- Added 4 new properties to dt_collection_properties_t, 
+  DT_COLLECTION_PROP_IMPORT_TIMESTAMP, DT_COLLECTION_PROP_CHANGE_TIMESTAMP,
+  DT_COLLECTION_PROP_EXPORT_TIMESTAMP, DT_COLLECTION_PROP_PRINT_TIMESTAMP
+
+- added darktable.gui.panel_get_size and darktable.gui.panel_set_size functions 
+  to set the width of the  left or right panels and the height of the bottom panel.
+
+- fixed is_password field of entry widget to work according to the API manual, so 
+  now when it is set to true the field is hidden.
+
+- Added function darktable.gui.views.lighttable.is_image_visible to check if an image 
+  is visible in lighttable view.
+
+- Added function darktable.gui.views.lighttable.set_image_visible to force an 
+  image to be visible in lighttable view.
+
+- Added a lua scripts installer to the default luarc
+  
 ## Changed Dependencies
 
 

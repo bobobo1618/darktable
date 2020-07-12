@@ -1,7 +1,6 @@
 /*
     This file is part of darktable,
-    copyright (c) 2011--2012 henrik andersson.
-    copyright (c) 2012--2013 ulrich pegelow.
+    Copyright (C) 2011-2020 darktable developers.
 
     darktable is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -19,6 +18,7 @@
 
 #pragma once
 
+#include "common/iop_profile.h"
 #include "common/opencl.h"
 #include "develop/pixelpipe.h"
 #include "dtgtk/button.h"
@@ -29,7 +29,6 @@
 
 typedef enum dt_develop_blend_mode_t
 {
-  DEVELOP_BLEND_MASK_FLAG = 0x80,
   DEVELOP_BLEND_DISABLED = 0x00,
   DEVELOP_BLEND_NORMAL = 0x01, /* deprecated as it did clamping */
   DEVELOP_BLEND_LIGHTEN = 0x02,
@@ -404,8 +403,6 @@ typedef struct dt_iop_gui_blend_data_t
   GtkWidget *lower_polarity;
   GtkWidget *colorpicker;
   GtkWidget *colorpicker_set_values;
-  dt_iop_color_picker_t color_picker;
-  int picker_set_upper_lower;
   GtkWidget *showmask;
   GtkWidget *suppress;
   void (*scale_print[8])(float value, char *string, int n);
@@ -447,8 +444,6 @@ typedef struct dt_iop_gui_blend_data_t
 
 
 
-//#define DT_DEVELOP_BLEND_WITH_MASK(p) ((p->mode&DEVELOP_BLEND_MASK_FLAG)?1:0)
-
 /** global init of blendops */
 dt_blendop_cl_global_t *dt_develop_blend_init_cl_global(void);
 /** global cleanup of blendops */
@@ -482,6 +477,8 @@ void dt_iop_gui_update_blendif(dt_iop_module_t *module);
 void dt_iop_gui_update_masks(dt_iop_module_t *module);
 void dt_iop_gui_cleanup_blending(dt_iop_module_t *module);
 void dt_iop_gui_blending_lose_focus(dt_iop_module_t *module);
+
+gboolean blend_color_picker_apply(dt_iop_module_t *module, GtkWidget *picker, dt_dev_pixelpipe_iop_t *piece);
 
 /** routine to translate from mode id to sequence in option list */
 int dt_iop_gui_blending_mode_seq(dt_iop_gui_blend_data_t *bd, int mode);

@@ -1,6 +1,6 @@
 /*
     This file is part of darktable,
-    copyright (c) 2010--2011 Henrik Andersson.
+    Copyright (C) 2010-2020 darktable developers.
 
     darktable is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -39,7 +39,8 @@ typedef enum dtgtk_cairo_paint_flags_t
   CPF_DO_NOT_USE_BORDER = 1 << 10, // do not paint inner border
   CPF_CUSTOM_BG = 1 << 11,
   CPF_CUSTOM_FG = 1 << 12,
-  CPF_SPECIAL_FLAG = 1 << 13       // this needs to be the last one. also update shift in dtgtk_cairo_paint_alignment
+  CPF_FOCUS = 1 << 13, 
+  CPF_SPECIAL_FLAG = 1 << 14       // this needs to be the last one. also update shift in dtgtk_cairo_paint_alignment
 } dtgtk_cairo_paint_flags_t;
 
 
@@ -66,6 +67,8 @@ void dtgtk_cairo_paint_flip(cairo_t *cr, gint x, gint y, gint w, gint h, gint fl
 void dtgtk_cairo_paint_switch(cairo_t *cr, gint x, gint y, gint w, gint h, gint flags, void *data);
 /** Paint an always-on switch icon */
 void dtgtk_cairo_paint_switch_on(cairo_t *cr, gint x, gint y, gint w, gint h, gint flags, void *data);
+/** Paint an always-off switch icon */
+void dtgtk_cairo_paint_switch_off(cairo_t *cr, gint x, gint y, gint w, gint h, gint flags, void *data);
 /** Paint a deprecated switch icon */
 void dtgtk_cairo_paint_switch_deprecated(cairo_t *cr, gint x, gint y, gint w, gint h, gint flags, void *data);
 /** Paint a plusminus icon */
@@ -111,6 +114,16 @@ void dtgtk_cairo_paint_aspectflip(cairo_t *cr, gint x, gint y, gint w, gint h, g
 void dtgtk_cairo_paint_label(cairo_t *cr, gint x, gint y, gint w, gint h, gint flags, void *data);
 /** Paint the local copy symbol */
 void dtgtk_cairo_paint_local_copy(cairo_t *cr, gint x, gint y, gint w, gint h, gint flags, void *data);
+/** Paint the reject icon on thumbs */
+void dtgtk_cairo_paint_reject(cairo_t *cr, gint x, gint y, gint w, gint h, gint flags, void *data);
+/** Paint a rating icon on thumbs */
+void dtgtk_cairo_paint_star(cairo_t *cr, gint x, gint y, gint w, gint h, gint flags, void *data);
+/** Paint an altered icon on thumbs */
+void dtgtk_cairo_paint_altered(cairo_t *cr, gint x, gint y, gint w, gint h, gint flags, void *data);
+/** Paint an audio icon on thumbs */
+void dtgtk_cairo_paint_audio(cairo_t *cr, gint x, gint y, gint w, gint h, gint flags, void *data);
+/** Paint an colorlabel "flower" icon on thumbs */
+void dtgtk_cairo_paint_label_flower(cairo_t *cr, gint x, gint y, gint w, gint h, gint flags, void *data);
 /** paint a color picker icon - a pipette for bigger buttons */
 void dtgtk_cairo_paint_colorpicker(cairo_t *cr, gint x, gint y, gint w, gint h, gint flags, void *data);
 /** paint a color picker icon with a plues sign */
@@ -165,6 +178,8 @@ void dtgtk_cairo_paint_rect_portrait(cairo_t *cr, gint x, gint y, gint w, gint h
 void dtgtk_cairo_paint_zoom(cairo_t *cr, gint x, gint y, gint w, gint h, gint flags, void *data);
 /** paint a duplicate/multi instance indicator */
 void dtgtk_cairo_paint_multiinstance(cairo_t *cr, gint x, gint y, gint w, gint h, gint flags, void *data);
+/** paint a simple grid icon */
+void dtgtk_cairo_paint_grid(cairo_t *cr, gint x, gint y, gint w, gint h, gint flags, void *data);
 
 /** paint active modulegroup icon */
 void dtgtk_cairo_paint_modulegroup_active(cairo_t *cr, gint x, gint y, gint w, gint h, gint flags, void *data);

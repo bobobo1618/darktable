@@ -1,6 +1,6 @@
 /*
     This file is part of darktable,
-    copyright (c) 2019 Aurélien Pierre.
+    Copyright (C) 2019-2020 darktable developers.
     darktable is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
     the Free Software Foundation, either version 3 of the License, or
@@ -288,7 +288,7 @@ schedule(static) collapse(2) aligned(focus_peaking:64)
                                                                  cairo_format_stride_for_width(CAIRO_FORMAT_ARGB32, buf_width));
   cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
   cairo_set_source_surface(cr, surface, 0.0, 0.0);
-  cairo_pattern_set_filter(cairo_get_source (cr), CAIRO_FILTER_BEST);
+  cairo_pattern_set_filter(cairo_get_source (cr), darktable.gui->filter_image);
   cairo_fill(cr);
   cairo_restore(cr);
 

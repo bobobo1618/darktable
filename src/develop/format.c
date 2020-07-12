@@ -1,6 +1,6 @@
 /*
     This file is part of darktable,
-    copyright (c) 2016 Roman Lebedev.
+    Copyright (C) 2016-2020 darktable developers.
 
     darktable is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -50,7 +50,8 @@ void default_input_format(dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, dt_de
 
   if(dt_image_is_raw(&pipe->image)) dsc->channels = 1;
 
-  if(dt_ioppr_get_iop_order(pipe->iop_order_list, self->op) > dt_ioppr_get_iop_order(pipe->iop_order_list, "rawprepare")) return;
+  if(dt_ioppr_get_iop_order(pipe->iop_order_list, self->op, self->multi_priority)
+     > dt_ioppr_get_iop_order(pipe->iop_order_list, "rawprepare", 0)) return;
 
   if(piece->pipe->dsc.filters)
     dsc->datatype = TYPE_UINT16;
@@ -67,7 +68,8 @@ void default_output_format(dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, dt_d
 
   if(dt_image_is_raw(&pipe->image)) dsc->channels = 1;
 
-  if(dt_ioppr_get_iop_order(pipe->iop_order_list, self->op) >= dt_ioppr_get_iop_order(pipe->iop_order_list, "rawprepare")) return;
+  if(dt_ioppr_get_iop_order(pipe->iop_order_list, self->op, self->multi_priority)
+     >= dt_ioppr_get_iop_order(pipe->iop_order_list, "rawprepare", 0)) return;
 
   if(piece->pipe->dsc.filters)
     dsc->datatype = TYPE_UINT16;

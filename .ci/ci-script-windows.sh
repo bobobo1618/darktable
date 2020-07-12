@@ -35,7 +35,7 @@ _status() {
         success) local -n nameref_color='green'; title='[DARKTABLE CI] SUCCESS:' ;;
         message) local -n nameref_color='cyan';  title='[DARKTABLE CI]'
     esac
-    printf "\n${nameref_color}${title}${normal} ${status}\n\n"
+    printf "%s" "\n${nameref_color}${title}${normal} ${status}\n\n"
 }
 
 # Run command with status
@@ -43,21 +43,21 @@ execute(){
     local status="${1}"
     local command="${2}"
     local arguments=("${@:3}")
-    cd "${package:-.}"
+    cd "${package:-.}" || exit "$?"
     message "${status}"
     if [[ "${command}" != *:* ]]
-        then ${command} ${arguments[@]}
-        else ${command%%:*} | ${command#*:} ${arguments[@]}
+        then "${command}" "${arguments[@]}"
+        else "${command%%:*}" | "${command#*:}" "${arguments[@]}"
     fi || failure "${status} failed"
     cd - > /dev/null
 }
 
 # Build
 build_darktable() {
-    cd $(cygpath ${APPVEYOR_BUILD_FOLDER})
+    cd "$(cygpath "${APPVEYOR_BUILD_FOLDER}")" || exit "$?"
 
-    mkdir build && cd build
-    cmake -G "MSYS Makefiles" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$(cygpath ${APPVEYOR_BUILD_FOLDER})/build $(cygpath ${APPVEYOR_BUILD_FOLDER})
+    mkdir build && cd build || exit "$?"
+    cmake -G "MSYS Makefiles" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$(cygpath "${APPVEYOR_BUILD_FOLDER}")"/build "$(cygpath "${APPVEYOR_BUILD_FOLDER}")"
     cmake --build .
     cmake --build . --target package
 }
@@ -82,6 +82,18 @@ cat > "$FONTCONFIG_FILE" <<EOF
 EOF
 
 execute 'Installing base-devel and toolchain'  pacman -S --needed --noconfirm mingw-w64-x86_64-{toolchain,clang,cmake}
-execute 'Installing dependencies' pacman -S --needed --noconfirm  mingw-w64-x86_64-{exiv2,lcms2,lensfun,dbus-glib,openexr,sqlite3,libxslt,libsoup,libwebp,libsecret,lua,graphicsmagick,openjpeg2,gtk3,pugixml,libexif,osm-gps-map,libgphoto2,flickcurl,drmingw,gettext,python3,iso-codes}
+execute 'Installing dependencies (except lensfun)' pacman -S --needed --noconfirm  mingw-w64-x86_64-{exiv2,lcms2,dbus-glib,openexr,sqlite3,libxslt,libsoup,libwebp,libsecret,lua,graphicsmagick,openjpeg2,gtk3,pugixml,libexif,osm-gps-map,libgphoto2,flickcurl,drmingw,gettext,python3,iso-codes}
+
+# Lensfun must be dealt with separately in an MSYS64 environment per note in Windows build instructions added in commit ca5a4fb
+execute 'Downloading known good lensfun 0.3.2-4' curl -fSs -o mingw-w64-x86_64-lensfun-0.3.2-4-any.pkg.tar.xz http://repo.msys2.org/mingw/x86_64/mingw-w64-x86_64-lensfun-0.3.2-4-any.pkg.tar.xz
+execute 'Installing known good lensfun' pacman -U --needed --noconfirm mingw-w64-x86_64-lensfun-0.3.2-4-any.pkg.tar.xz
+# Downgraded lensfun package is explicitly packaged to python 3.6 directories
+# but fortunately compatible with 3.8
+execute 'Copying python 3.6 lensfun libraries to 3.8' cp -R /mingw64/lib/python3.6/site-packages/lensfun* /mingw64/lib/python3.8/site-packages
 execute 'Updating lensfun databse' lensfun-update-data
+
+execute 'Installing additional OpenMP library for clang' pacman -S --needed --noconfirm mingw-w64-x86_64-openmp
+execute 'Library linking fix for MinGW clang issue 6400: extracting library' ar x /mingw64/lib/libomp.a 
+execute 'Library linking fix for MinGW clang issue 6400: copying library' cp libomp.dll.a /mingw64/lib/
+
 execute 'Building darktable' build_darktable

@@ -1,6 +1,6 @@
 /*
     This file is part of darktable,
-    copyright (c) 2009--2011 johannes hanika.
+    Copyright (C) 2009-2020 darktable developers.
 
     darktable is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -38,7 +38,7 @@ typedef struct dt_dev_history_item_t
   dt_iop_params_t *params;        // parameters for this operation
   struct dt_develop_blend_params_t *blend_params;
   char op_name[20];
-  double iop_order;
+  int iop_order;
   int multi_priority;
   char multi_name[128];
   GList *forms; // snapshot of dt_develop_t->forms
@@ -53,6 +53,16 @@ typedef enum dt_dev_overexposed_colorscheme_t
   DT_DEV_OVEREXPOSED_PURPLEGREEN = 2
 } dt_dev_overexposed_colorscheme_t;
 
+typedef enum dt_dev_overlay_colors_t
+{
+  DT_DEV_OVERLAY_GRAY = 0,
+  DT_DEV_OVERLAY_RED = 1,
+  DT_DEV_OVERLAY_GREEN = 2,
+  DT_DEV_OVERLAY_YELLOW = 3,
+  DT_DEV_OVERLAY_CYAN = 4,
+  DT_DEV_OVERLAY_MAGENTA = 5
+} dt_dev_overlay_colors_t;
+
 typedef enum dt_dev_rawoverexposed_mode_t {
   DT_DEV_RAWOVEREXPOSED_MODE_MARK_CFA = 0,
   DT_DEV_RAWOVEREXPOSED_MODE_MARK_SOLID = 1,
@@ -66,11 +76,17 @@ typedef enum dt_dev_rawoverexposed_colorscheme_t {
   DT_DEV_RAWOVEREXPOSED_BLACK = 3
 } dt_dev_rawoverexposed_colorscheme_t;
 
+typedef enum dt_dev_scope_type_t
+{
+  DT_DEV_SCOPE_HISTOGRAM = 0,
+  DT_DEV_SCOPE_WAVEFORM,
+  DT_DEV_SCOPE_N // needs to be the last one
+} dt_dev_scope_type_t;
+
 typedef enum dt_dev_histogram_type_t
 {
   DT_DEV_HISTOGRAM_LOGARITHMIC = 0,
   DT_DEV_HISTOGRAM_LINEAR,
-  DT_DEV_HISTOGRAM_WAVEFORM,
   DT_DEV_HISTOGRAM_N // needs to be the last one
 } dt_dev_histogram_type_t;
 
@@ -113,7 +129,7 @@ typedef enum dt_dev_pixelpipe_display_mask_t
   DT_DEV_PIXELPIPE_DISPLAY_STICKY = 1 << 16
 } dt_dev_pixelpipe_display_mask_t;
 
-extern const gchar *dt_dev_histogram_type_names[];
+extern const gchar *dt_dev_scope_type_names[];
 
 typedef struct dt_dev_proxy_exposure_t
 {
@@ -132,10 +148,11 @@ typedef struct dt_develop_t
   int32_t gui_leaving;  // set if everything is scheduled to shut down.
   int32_t gui_synch;    // set by the render threads if gui_update should be called in the modules.
   int32_t focus_hash;   // determines whether to start a new history item or to merge down.
-  int32_t image_loading, first_load, image_force_reload;
-  int32_t preview_loading, preview_input_changed;
-  int32_t preview2_loading, preview2_input_changed;
+  gboolean preview_loading, preview2_loading, image_loading, history_updating, image_force_reload, first_load;
+  gboolean preview_input_changed, preview2_input_changed;
+
   dt_dev_pixelpipe_status_t image_status, preview_status, preview2_status;
+  int32_t image_invalid_cnt;
   uint32_t timestamp;
   uint32_t average_delay;
   uint32_t preview_average_delay;
@@ -180,11 +197,9 @@ typedef struct dt_develop_t
   // histogram for display.
   uint32_t *histogram, *histogram_pre_tonecurve, *histogram_pre_levels;
   uint32_t histogram_max, histogram_pre_tonecurve_max, histogram_pre_levels_max;
-  uint32_t *histogram_waveform, histogram_waveform_width, histogram_waveform_height,
-      histogram_waveform_stride;
-  // we should process the waveform histogram in the correct size to make it not look like crap. since this
-  // requires gui knowledge we need this mutex
-  //   dt_pthread_mutex_t histogram_waveform_mutex;
+  uint8_t *histogram_waveform;
+  uint32_t histogram_waveform_width, histogram_waveform_height, histogram_waveform_stride;
+  dt_dev_scope_type_t scope_type;
   dt_dev_histogram_type_t histogram_type;
 
   // list of forms iop can use for masks or whatever
@@ -224,6 +239,8 @@ typedef struct dt_develop_t
       gboolean (*test)(struct dt_lib_module_t *self, uint32_t group, uint32_t iop_group);
       /* switch to modulegroup */
       void (*switch_group)(struct dt_lib_module_t *self, struct dt_iop_module_t *module);
+      /* update modulegroup visibility */
+      void (*update_visibility)(struct dt_lib_module_t *self);
       /* set focus to the search module text box */
       void (*search_text_focus)(struct dt_lib_module_t *self);
     } modulegroups;
@@ -274,6 +291,16 @@ typedef struct dt_develop_t
     dt_dev_rawoverexposed_colorscheme_t colorscheme;
     float threshold;
   } rawoverexposed;
+
+  // for the overlay color indicator
+  struct
+  {
+    guint timeout;
+    GtkWidget *floating_window, *button, *colors; // yes, having gtk stuff in here is ugly. live with it.
+
+    gboolean enabled;
+    dt_dev_overlay_colors_t color;
+  } overlay_color;
 
   // ISO 12646-compliant colour assessment conditions
   struct
@@ -387,6 +414,8 @@ float dt_dev_exposure_get_black(dt_develop_t *dev);
 gboolean dt_dev_modulegroups_available(dt_develop_t *dev);
 /** switch to modulegroup of module */
 void dt_dev_modulegroups_switch(dt_develop_t *dev, struct dt_iop_module_t *module);
+/** update modulegroup visibility */
+void dt_dev_modulegroups_update_visibility(dt_develop_t *dev);
 /** set the focus to modulegroup search text */
 void dt_dev_modulegroups_search_text_focus(dt_develop_t *dev);
 /** set the active modulegroup */
@@ -426,8 +455,6 @@ void dt_dev_modules_update_multishow(dt_develop_t *dev);
 /** generates item multi-instance name */
 gchar *dt_history_item_get_name(const struct dt_iop_module_t *module);
 gchar *dt_history_item_get_name_html(const struct dt_iop_module_t *module);
-/* returns the iop-module found in list with the given name */
-struct dt_iop_module_t *dt_dev_get_base_module(GList *iop_list, const char *op);
 
 /*
  * distort functions

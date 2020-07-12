@@ -1,4 +1,4 @@
-include_directories("${CMAKE_CURRENT_BINARY_DIR}/../" "${CMAKE_CURRENT_SOURCE_DIR}")
+include_directories("${CMAKE_CURRENT_BINARY_DIR}/../")
 
 include(manage-symbol-visibility)
 
@@ -20,7 +20,7 @@ add_custom_target(
 )
 
 # The modules
-set(MODULES import export copy_history styles tagging image select collect recentcollect metadata metadata_view navigation histogram history snapshots modulelist modulegroups backgroundjobs colorpicker masks session duplicate)
+set(MODULES import export copy_history styles tagging image select collect recentcollect metadata metadata_view navigation histogram history snapshots modulelist modulegroups backgroundjobs colorpicker masks session duplicate ioporder)
 
 # The tools
 set(MODULES ${MODULES} viewswitcher)
@@ -64,6 +64,7 @@ add_library(colorpicker MODULE "colorpicker.c")
 add_library(masks MODULE "masks.c")
 add_library(session MODULE "session.c")
 add_library(duplicate MODULE "duplicate.c")
+add_library(ioporder MODULE "ioporder.c")
 
 # tools
 add_library(viewswitcher MODULE "tools/viewswitcher.c")
@@ -88,11 +89,11 @@ if(BUILD_BATTERY_INDICATOR)
 endif()
 
 # check if gphoto2 found and add build of camera modules...
-if(GPHOTO2_FOUND)
+if(Gphoto2_FOUND)
 	add_library(camera MODULE "camera.c")
 	add_library(live_view MODULE "live_view.c")
 	set(MODULES ${MODULES} camera live_view)
-endif(GPHOTO2_FOUND)
+endif(Gphoto2_FOUND)
 
 # the modules specific to map mode
 if(USE_MAP)
@@ -123,16 +124,9 @@ foreach(module ${MODULES})
     if (WIN32)
       _detach_debuginfo (${module} ${CMAKE_INSTALL_LIBDIR}/darktable/plugins/lighttable)
     else()
-        # Note that $ORIGIN is not a variable but has a special meaning at runtime.
-        # The string "$ORIGIN" should end up in the executable as-is.
-        set(RPATH_DT "$ORIGIN")
-        if (APPLE)
-            # The string "@loader_path" should end up in the executable as-is.
-            set(RPATH_DT "@loader_path")
-        endif()
         set_target_properties(${module}
                               PROPERTIES
-                              INSTALL_RPATH ${RPATH_DT}/../${CMAKE_INSTALL_LIBDIR}/darktable)
-        endif(WIN32)
+                              INSTALL_RPATH ${CMAKE_INSTALL_LIBDIR_RPATH})
+    endif(WIN32)
     install(TARGETS  ${module} DESTINATION ${CMAKE_INSTALL_LIBDIR}/darktable/plugins/lighttable COMPONENT DTApplication)
 endforeach(module)

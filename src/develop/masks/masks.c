@@ -1,6 +1,6 @@
 /*
     This file is part of darktable,
-    copyright (c) 2012 aldric renaudin.
+    Copyright (C) 2013-2020 darktable developers.
 
     darktable is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -716,7 +716,7 @@ int dt_masks_get_points_border(dt_develop_t *dev, dt_masks_form_t *form, float *
   if(form->type & DT_MASKS_CIRCLE)
   {
     dt_masks_point_circle_t *circle = (dt_masks_point_circle_t *)(g_list_first(form->points)->data);
-    float x, y;
+    float x = 0.0f, y = 0.0f;
     if(source)
       x = form->source[0], y = form->source[1];
     else
@@ -754,7 +754,7 @@ int dt_masks_get_points_border(dt_develop_t *dev, dt_masks_form_t *form, float *
   else if(form->type & DT_MASKS_ELLIPSE)
   {
     dt_masks_point_ellipse_t *ellipse = (dt_masks_point_ellipse_t *)(g_list_first(form->points)->data);
-    float x, y, a, b;
+    float x = 0.0f, y = 0.0f, a = 0.0f, b = 0.0f;
     if(source)
       x = form->source[0], y = form->source[1];
     else
@@ -1180,6 +1180,31 @@ static int dt_masks_legacy_params_v4_to_v5(dt_develop_t *dev, void *params)
   return 0;
 }
 
+static int dt_masks_legacy_params_v5_to_v6(dt_develop_t *dev, void *params)
+{
+  /*
+   * difference affecting gradient
+   * up to v5: linear transition
+   * after v5: linear or sigmoidal transition
+   */
+
+  dt_masks_form_t *m = (dt_masks_form_t *)params;
+
+  GList *p = g_list_first(m->points);
+
+  if(!p) return 1;
+
+  if(m->type & DT_MASKS_GRADIENT)
+  {
+    dt_masks_point_gradient_t *gradient = (dt_masks_point_gradient_t *)p->data;
+    gradient->state = DT_MASKS_GRADIENT_STATE_LINEAR;
+  }
+
+  m->version = 6;
+
+  return 0;
+}
+
 
 int dt_masks_legacy_params(dt_develop_t *dev, void *params, const int old_version, const int new_version)
 {
@@ -1191,27 +1216,35 @@ int dt_masks_legacy_params(dt_develop_t *dev, void *params, const int old_versio
   }
 #endif
 
-  if(old_version == 1 && new_version == 5)
+  if(old_version == 1 && new_version == 6)
   {
     res = dt_masks_legacy_params_v1_to_v2(dev, params);
     if(!res) res = dt_masks_legacy_params_v2_to_v3(dev, params);
     if(!res) res = dt_masks_legacy_params_v3_to_v4(dev, params);
     if(!res) res = dt_masks_legacy_params_v4_to_v5(dev, params);
+    if(!res) res = dt_masks_legacy_params_v5_to_v6(dev, params);
   }
-  else if(old_version == 2 && new_version == 5)
+  else if(old_version == 2 && new_version == 6)
   {
     res = dt_masks_legacy_params_v2_to_v3(dev, params);
     if(!res) res = dt_masks_legacy_params_v3_to_v4(dev, params);
     if(!res) res = dt_masks_legacy_params_v4_to_v5(dev, params);
+    if(!res) res = dt_masks_legacy_params_v5_to_v6(dev, params);
   }
-  else if(old_version == 3 && new_version == 5)
+  else if(old_version == 3 && new_version == 6)
   {
     res = dt_masks_legacy_params_v3_to_v4(dev, params);
     if(!res) res = dt_masks_legacy_params_v4_to_v5(dev, params);
+    if(!res) res = dt_masks_legacy_params_v5_to_v6(dev, params);
   }
-  else if(old_version == 4 && new_version == 5)
+  else if(old_version == 4 && new_version == 6)
   {
     res = dt_masks_legacy_params_v4_to_v5(dev, params);
+    if(!res) res = dt_masks_legacy_params_v5_to_v6(dev, params);
+  }
+  else if(old_version == 5 && new_version == 6)
+  {
+    res = dt_masks_legacy_params_v5_to_v6(dev, params);
   }
 
   return res;
@@ -1296,7 +1329,7 @@ void dt_masks_read_masks_history(dt_develop_t *dev, const int imgid)
     dt_masks_form_t *form = dt_masks_create(type);
     form->formid = formid;
     const char *name = (const char *)sqlite3_column_text(stmt, 3);
-    snprintf(form->name, sizeof(form->name), "%s", name);
+    g_strlcpy(form->name, name, sizeof(form->name));
     form->version = sqlite3_column_int(stmt, 4);
     form->points = NULL;
     const int nb_points = sqlite3_column_int(stmt, 6);
@@ -1539,7 +1572,7 @@ int dt_masks_events_mouse_moved(struct dt_iop_module_t *module, double x, double
   // record mouse position even if there are no masks visible
   dt_masks_form_gui_t *gui = darktable.develop->form_gui;
   dt_masks_form_t *form = darktable.develop->form_visible;
-  float pzx, pzy;
+  float pzx = 0.0f, pzy = 0.0f;
 
   dt_dev_get_pointer_zoom_pos(darktable.develop, x, y, &pzx, &pzy);
   pzx += 0.5f;
@@ -1586,7 +1619,7 @@ int dt_masks_events_button_released(struct dt_iop_module_t *module, double x, do
 
   dt_masks_form_t *form = darktable.develop->form_visible;
   dt_masks_form_gui_t *gui = darktable.develop->form_gui;
-  float pzx, pzy;
+  float pzx = 0.0f, pzy = 0.0f;
   dt_dev_get_pointer_zoom_pos(darktable.develop, x, y, &pzx, &pzy);
   pzx += 0.5f;
   pzy += 0.5f;
@@ -1615,7 +1648,7 @@ int dt_masks_events_button_pressed(struct dt_iop_module_t *module, double x, dou
 
   dt_masks_form_t *form = darktable.develop->form_visible;
   dt_masks_form_gui_t *gui = darktable.develop->form_gui;
-  float pzx, pzy;
+  float pzx = 0.0f, pzy = 0.0f;
   dt_dev_get_pointer_zoom_pos(darktable.develop, x, y, &pzx, &pzy);
   pzx += 0.5f;
   pzy += 0.5f;
@@ -1663,7 +1696,7 @@ int dt_masks_events_mouse_scrolled(struct dt_iop_module_t *module, double x, dou
 
   dt_masks_form_t *form = darktable.develop->form_visible;
   dt_masks_form_gui_t *gui = darktable.develop->form_gui;
-  float pzx, pzy;
+  float pzx = 0.0f, pzy = 0.0f;
   dt_dev_get_pointer_zoom_pos(darktable.develop, x, y, &pzx, &pzy);
   pzx += 0.5f;
   pzy += 0.5f;
@@ -1683,17 +1716,24 @@ int dt_masks_events_mouse_scrolled(struct dt_iop_module_t *module, double x, dou
   else if(form->type & DT_MASKS_BRUSH)
     ret = dt_brush_events_mouse_scrolled(module, pzx, pzy, up, state, form, 0, gui, 0);
 
-  if(gui->creation && (state & GDK_CONTROL_MASK) == GDK_CONTROL_MASK)
+  if(gui)
   {
-    float opacity = dt_conf_get_float("plugins/darkroom/masks/opacity");
-    float amount = 0.05f;
-    if(!up) amount = -amount;
+    // for brush, the opacity is the density of the masks, do not update opacity here for the brush.
+    if(gui->creation && (state & GDK_CONTROL_MASK) == GDK_CONTROL_MASK)
+    {
+      float opacity = dt_conf_get_float("plugins/darkroom/masks/opacity");
+      float amount = 0.05f;
+      if(!up) amount = -amount;
 
-    opacity = CLAMP(opacity + amount, 0.0f, 1.0f);
-    dt_conf_set_float("plugins/darkroom/masks/opacity", opacity);
+      opacity = CLAMP(opacity + amount, 0.05f, 1.0f);
+      dt_conf_set_float("plugins/darkroom/masks/opacity", opacity);
+      const int opacitypercent = opacity * 100;
+      dt_toast_log(_("opacity: %d%%"), opacitypercent);
+      ret = 1;
+    }
+
+    _set_hinter_message(gui, form);
   }
-
-  if(gui) _set_hinter_message(gui, form);
 
   return ret;
 }
@@ -1709,7 +1749,7 @@ void dt_masks_events_post_expose(struct dt_iop_module_t *module, cairo_t *cr, in
   float wd = dev->preview_pipe->backbuf_width;
   float ht = dev->preview_pipe->backbuf_height;
   if(wd < 1.0 || ht < 1.0) return;
-  float pzx, pzy;
+  float pzx = 0.0f, pzy = 0.0f;
   dt_dev_get_pointer_zoom_pos(dev, pointerx, pointery, &pzx, &pzy);
   pzx += 0.5f;
   pzy += 0.5f;
@@ -1765,7 +1805,7 @@ void dt_masks_clear_form_gui(dt_develop_t *dev)
   dev->form_gui->dx = dev->form_gui->dy = 0.0f;
   dev->form_gui->scrollx = dev->form_gui->scrolly = 0.0f;
   dev->form_gui->form_selected = dev->form_gui->border_selected = dev->form_gui->form_dragging
-      = dev->form_gui->form_rotating = dev->form_gui->border_toggling = FALSE;
+      = dev->form_gui->form_rotating = dev->form_gui->border_toggling = dev->form_gui->gradient_toggling = FALSE;
   dev->form_gui->source_selected = dev->form_gui->source_dragging = FALSE;
   dev->form_gui->pivot_selected = FALSE;
   dev->form_gui->point_border_selected = dev->form_gui->seg_selected = dev->form_gui->point_selected
@@ -2167,10 +2207,9 @@ void dt_masks_iop_value_changed_callback(GtkWidget *widget, struct dt_iop_module
   if(sel == 0) return;
   if(sel == 1)
   {
-    const int reset = darktable.gui->reset;
-    darktable.gui->reset = 1;
+    ++darktable.gui->reset;
     dt_bauhaus_combobox_set(bd->masks_combo, 0);
-    darktable.gui->reset = reset;
+    --darktable.gui->reset;
     return;
   }
   if(sel > 0)
@@ -2296,7 +2335,6 @@ void dt_masks_form_remove(struct dt_iop_module_t *module, dt_masks_form_t *grp, 
     dt_iop_module_t *m = (dt_iop_module_t *)iops->data;
     if(m->flags() & IOP_FLAGS_SUPPORTS_BLENDING)
     {
-      int ok = 0;
       // is the form the base group of the iop ?
       if(id == m->blend_params->mask_id)
       {
@@ -2309,6 +2347,7 @@ void dt_masks_form_remove(struct dt_iop_module_t *module, dt_masks_form_t *grp, 
         dt_masks_form_t *iopgrp = dt_masks_get_from_id(darktable.develop, m->blend_params->mask_id);
         if(iopgrp && (iopgrp->type & DT_MASKS_GROUP))
         {
+          int ok = 0;
           GList *forms = g_list_first(iopgrp->points);
           while(forms)
           {
@@ -2370,8 +2409,10 @@ void dt_masks_form_change_opacity(dt_masks_form_t *form, int parentid, int up)
     dt_masks_point_group_t *fpt = (dt_masks_point_group_t *)fpts->data;
     if(fpt->formid == id)
     {
-      const float opacity = CLAMP(fpt->opacity + amount, 0.0f, 1.0f);
+      const float opacity = CLAMP(fpt->opacity + amount, 0.05f, 1.0f);
       fpt->opacity = opacity;
+      const int opacitypercent = opacity * 100;
+      dt_toast_log(_("opacity: %d%%"), opacitypercent);
       dt_dev_add_masks_history_item(darktable.develop, NULL, TRUE);
       dt_masks_update_image(darktable.develop);
       break;
@@ -2923,7 +2964,7 @@ void dt_masks_set_source_pos_initial_value(dt_masks_form_gui_t *gui, const int m
   if(gui->source_pos_type == DT_MASKS_SOURCE_POS_RELATIVE_TEMP)
   {
     // if is has not been defined by the user, set some default
-    if(gui->posx_source == -1.f && gui->posy_source == -1.f)
+    if(gui->posx_source == -1.0f && gui->posy_source == -1.0f)
     {
       if(mask_type & DT_MASKS_CIRCLE)
       {
@@ -3001,11 +3042,11 @@ void dt_masks_calculate_source_pos_value(dt_masks_form_gui_t *gui, const int mas
                                          const float initial_ypos, const float xpos, const float ypos, float *px,
                                          float *py, const int adding)
 {
-  float x = 0.f, y = 0.f;
-
-  const float iwd = darktable.develop->preview_pipe->iwidth;
-  const float iht = darktable.develop->preview_pipe->iheight;
-
+  float x = 0.0f, y = 0.0f;
+  const float pr_d = darktable.develop->preview_downsampling;                                                            
+  const float iwd = pr_d * darktable.develop->preview_pipe->iwidth;
+  const float iht = pr_d * darktable.develop->preview_pipe->iheight;
+  
   if(gui->source_pos_type == DT_MASKS_SOURCE_POS_RELATIVE)
   {
     x = xpos + gui->posx_source;
@@ -3013,7 +3054,7 @@ void dt_masks_calculate_source_pos_value(dt_masks_form_gui_t *gui, const int mas
   }
   else if(gui->source_pos_type == DT_MASKS_SOURCE_POS_RELATIVE_TEMP)
   {
-    if(gui->posx_source == -1.f && gui->posy_source == -1.f)
+    if(gui->posx_source == -1.0f && gui->posy_source == -1.0f)
     {
       if(mask_type & DT_MASKS_CIRCLE)
       {

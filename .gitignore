@@ -15,3 +15,8 @@ cscope.out
 tags
 cscope.*
 compile_commands.json
+.cproject
+.project
+.settings/
+diff*png
+output*png

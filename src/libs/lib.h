@@ -1,7 +1,6 @@
 /*
     This file is part of darktable,
-    copyright (c) 2009--2010 johannes hanika.
-    copyright (c) 2011 henrik andersson.
+    Copyright (C) 2009-2020 darktable developers.
 
     darktable is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -153,6 +152,9 @@ gboolean dt_lib_gui_get_expanded(dt_lib_module_t *module);
 
 /** connects the reset and presets shortcuts to a lib */
 void dt_lib_connect_common_accels(dt_lib_module_t *module);
+
+/** return the plugin with the given name */
+dt_lib_module_t *dt_lib_get_module(const char *name);
 
 /** get the visible state of a plugin */
 gboolean dt_lib_is_visible(dt_lib_module_t *module);

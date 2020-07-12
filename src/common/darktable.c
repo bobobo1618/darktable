@@ -1,8 +1,6 @@
 /*
     This file is part of darktable,
-    copyright (c) 2009--2012 johannes hanika.
-    copyright (c) 2010--2012 henrik andersson.
-    copyright (c) 2010--2012 tobias ellinghaus.
+    Copyright (C) 2009-2020 darktable developers.
 
     darktable is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -88,6 +86,8 @@
 
 #ifdef HAVE_GRAPHICSMAGICK
 #include <magick/api.h>
+#elif defined HAVE_IMAGEMAGICK
+#include <MagickWand/MagickWand.h>
 #endif
 
 #include "dbus.h"
@@ -120,8 +120,8 @@ static int usage(const char *argv0)
   printf("  --conf <key>=<value>\n");
   printf("  --configdir <user config directory>\n");
   printf("  -d {all,cache,camctl,camsupport,control,dev,fswatch,input,lighttable,\n");
-  printf("      lua, masks,memory,nan,opencl,perf,pwstorage,print,sql,ioporder\n");
-  printf("      imageio\n");
+  printf("      lua,masks,memory,nan,opencl,perf,pwstorage,print,sql,ioporder,\n");
+  printf("      imageio}\n");
   printf("  --datadir <data directory>\n");
 #ifdef HAVE_OPENCL
   printf("  --disable-opencl\n");
@@ -175,8 +175,6 @@ static void strip_semicolons_from_keymap(const char *path)
   char pathtmp[PATH_MAX] = { 0 };
   FILE *fin = g_fopen(path, "rb");
   FILE *fout;
-  int i;
-  int c = '\0';
 
   if(!fin) return;
 
@@ -189,22 +187,30 @@ static void strip_semicolons_from_keymap(const char *path)
     return;
   }
 
+  int c = '\0';
   // First ignoring the first three lines
-  for(i = 0; i < 3; i++)
+  for(int i = 0; i < 3; i++)
   {
     while(c != '\n' && c != '\r' && c != EOF) c = fgetc(fin);
     while(c == '\n' || c == '\r') c = fgetc(fin);
+    ungetc(c, fin);
   }
 
   // Then ignore the first two characters of each line, copying the rest out
   while(c != EOF)
   {
     fseek(fin, 2, SEEK_CUR);
-    do
+    while(c != '\n' && c != '\r' && c != EOF)
     {
       c = fgetc(fin);
-      if(c != EOF) fputc(c, fout);
-    } while(c != '\n' && c != '\r' && c != EOF);
+      if(c != '\n' && c != '\r' && c != EOF) fputc(c, fout);
+    }
+    while(c == '\n' || c == '\r')
+    {
+      fputc(c, fout);
+      c = fgetc(fin);
+    }
+    ungetc(c, fin);
   }
 
   fclose(fin);
@@ -235,8 +241,6 @@ int dt_load_from_string(const gchar *input, gboolean open_image_in_dr, gboolean 
   if(g_file_test(filename, G_FILE_TEST_IS_DIR))
   {
     // import a directory into a film roll
-    unsigned int last_char = strlen(filename) - 1;
-    if(filename[last_char] == '/') filename[last_char] = '\0';
     id = dt_film_import(filename);
     if(id)
     {
@@ -544,6 +548,12 @@ int dt_init(int argc, char *argv[], const gboolean init_gui, const gboolean load
                "  GraphicsMagick support enabled\n"
 #else
                "  GraphicsMagick support disabled\n"
+#endif
+
+#ifdef HAVE_IMAGEMAGICK
+               "  ImageMagick support enabled\n"
+#else
+               "  ImageMagick support disabled\n"
 #endif
 
 #ifdef HAVE_OPENEXR
@@ -863,7 +873,8 @@ int dt_init(int argc, char *argv[], const gboolean init_gui, const gboolean load
     return 1;
   }
 
-  dt_ioppr_check_db_integrity();
+  //db maintenance on startup (if configured to do so)
+  dt_database_maybe_maintenance(darktable.db, init_gui, FALSE);
 
   // Initialize the signal system
   darktable.signals = dt_control_signal_init();
@@ -912,6 +923,9 @@ int dt_init(int argc, char *argv[], const gboolean init_gui, const gboolean load
 
   // *SIGH*
   dt_set_signal_handlers();
+#elif defined HAVE_IMAGEMAGICK
+  /* ImageMagick init */
+  MagickWandGenesis();
 #endif
 
   darktable.opencl = (dt_opencl_t *)calloc(1, sizeof(dt_opencl_t));
@@ -962,8 +976,8 @@ int dt_init(int argc, char *argv[], const gboolean init_gui, const gboolean load
   darktable.imageio = (dt_imageio_t *)calloc(1, sizeof(dt_imageio_t));
   dt_imageio_init(darktable.imageio);
 
-  // load iop order
-  darktable.iop_order_list = dt_ioppr_get_iop_order_list(NULL);
+  // load default iop order
+  darktable.iop_order_list = dt_ioppr_get_iop_order_list(0, FALSE);
   // load iop order rules
   darktable.iop_order_rules = dt_ioppr_get_iop_order_rules();
   // load the darkroom mode plugins once:
@@ -975,12 +989,19 @@ int dt_init(int argc, char *argv[], const gboolean init_gui, const gboolean load
     return 1;
   }
 
+  // set up memory.darktable_iop_names table
+  dt_iop_set_darktable_iop_table();
+
+  // set up the list of exiv2 metadata
+  dt_exif_set_exiv2_taglist();
+
   if(init_gui)
   {
 #ifdef HAVE_GPHOTO2
     // Initialize the camera control.
     // this is done late so that the gui can react to the signal sent but before switching to lighttable!
     darktable.camctl = dt_camctl_new();
+    dt_camctl_background_detect_cameras();
 #endif
 
     darktable.lib = (dt_lib_t *)calloc(1, sizeof(dt_lib_t));
@@ -1027,6 +1048,7 @@ int dt_init(int argc, char *argv[], const gboolean init_gui, const gboolean load
   if(init_gui)
   {
     const char *mode = "lighttable";
+#ifdef HAVE_GAME
     // april 1st: you have to earn using dt first! or know that you can switch views with keyboard shortcuts
     time_t now;
     time(&now);
@@ -1043,6 +1065,7 @@ int dt_init(int argc, char *argv[], const gboolean init_gui, const gboolean load
         mode = "knight";
       }
     }
+#endif
     // we have to call dt_ctl_switch_mode_to() here already to not run into a lua deadlock.
     // having another call later is ok
     dt_ctl_switch_mode_to(mode);
@@ -1091,6 +1114,8 @@ int dt_init(int argc, char *argv[], const gboolean init_gui, const gboolean load
 void dt_cleanup()
 {
   const int init_gui = (darktable.gui != NULL);
+
+  dt_database_maybe_maintenance(darktable.db, init_gui, TRUE);
 
 #ifdef HAVE_PRINT
   dt_printers_abort_discovery();
@@ -1149,10 +1174,13 @@ void dt_cleanup()
 
 #ifdef HAVE_GRAPHICSMAGICK
   DestroyMagick();
+#elif defined HAVE_IMAGEMAGICK
+  MagickWandTerminus();
 #endif
 
   dt_guides_cleanup(darktable.guides);
 
+  dt_database_optimize(darktable.db);
   dt_database_destroy(darktable.db);
 
   if(init_gui)

@@ -1,8 +1,6 @@
 /*
  *    This file is part of darktable,
- *    copyright (c) 2009--2017 johannes hanika.
- *    copyright (c) 2011--2017 tobias ellinghaus.
- *    copyright (c) 2015 Bruce Guenter
+ *    Copyright (C) 2017-2020 darktable developers.
  *
  *    darktable is free software: you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
@@ -23,9 +21,13 @@
 #include "common/math.h"
 
 #ifdef __SSE2__
-#include "common/sse.h"
+#include "common/sse.h" // also loads darkable.h
 #include <xmmintrin.h>
+#else
+#include "common/darktable.h"
+#endif
 
+#ifdef __SSE2__
 static inline __m128 lab_f_inv_m(const __m128 x)
 {
   const __m128 epsilon = _mm_set1_ps(0.20689655172413796f); // cbrtf(216.0f/24389.0f);

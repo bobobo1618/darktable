@@ -1,5 +1,6 @@
 /*
  * This file is part of darktable,
+ * Copyright (C) 2019-2020 darktable developers.
  *
  *  Copyright (c) 2019      Andreas Schneider
  *
@@ -34,6 +35,10 @@
 #include "imageio/format/imageio_format_api.h"
 
 #include <avif/avif.h>
+
+#define AVIF_MIN_TILE_SIZE 512
+#define AVIF_MAX_TILE_SIZE 3072
+#define AVIF_DEFAULT_TILE_SIZE AVIF_MIN_TILE_SIZE * 4
 
 DT_MODULE(1)
 
@@ -173,12 +178,16 @@ int write_image(struct dt_imageio_module_data_t *data,
                 int imgid,
                 int num,
                 int total,
-                struct dt_dev_pixelpipe_t *pipe)
+                struct dt_dev_pixelpipe_t *pipe,
+                const gboolean export_masks)
 {
   dt_imageio_avif_t *d = (dt_imageio_avif_t *)data;
 
-  avifPixelFormat format;
+  avifPixelFormat format = AVIF_PIXEL_FORMAT_NONE;
   avifImage *image = NULL;
+  avifRGBImage rgb = {
+      .format = AVIF_RGB_FORMAT_RGB,
+  };
   avifEncoder *encoder = NULL;
   uint8_t *icc_profile_data = NULL;
   uint32_t icc_profile_len;
@@ -223,37 +232,37 @@ int write_image(struct dt_imageio_module_data_t *data,
            avif_get_compression_string(d->compression_type),
            d->quality);
 
-  avifImageAllocatePlanes(image, AVIF_PLANES_RGB);
+  avifRGBImageSetDefaults(&rgb, image);
+  rgb.format = AVIF_RGB_FORMAT_RGB;
+
+  avifRGBImageAllocatePixels(&rgb);
 
   const float max_channel_f = (float)((1 << bit_depth) - 1);
 
-  const size_t R_rowbytes = image->rgbRowBytes[AVIF_CHAN_R];
-  const size_t G_rowbytes = image->rgbRowBytes[AVIF_CHAN_G];
-  const size_t B_rowbytes = image->rgbRowBytes[AVIF_CHAN_B];
+  const size_t rowbytes = rgb.rowBytes;
 
   const float *const restrict in_data = (const float *)in;
-
-  uint8_t *const restrict R_plane8 = (uint8_t *)image->rgbPlanes[AVIF_CHAN_R];
-  uint8_t *const restrict G_plane8 = (uint8_t *)image->rgbPlanes[AVIF_CHAN_G];
-  uint8_t *const restrict B_plane8 = (uint8_t *)image->rgbPlanes[AVIF_CHAN_B];
+  uint8_t *const restrict out = (uint8_t *)rgb.pixels;
 
   switch(bit_depth) {
   case 12:
   case 10: {
 #ifdef _OPENMP
 #pragma omp parallel for simd default(none) \
-  dt_omp_firstprivate(in_data, width, height, R_plane8, G_plane8, B_plane8, \
-                      R_rowbytes, G_rowbytes, B_rowbytes, max_channel_f) \
+  dt_omp_firstprivate(in_data, width, height, out, rowbytes, max_channel_f) \
   schedule(simd:static) \
   collapse(2)
 #endif
-    for (size_t y = 0; y < height; y++) {
-      for (size_t x = 0; x < width; x++) {
-          const float *pixel = &in_data[(size_t)4 * ((y * width) + x)];
+    for (size_t y = 0; y < height; y++)
+    {
+      for (size_t x = 0; x < width; x++)
+      {
+          const float *in_pixel = &in_data[(size_t)4 * ((y * width) + x)];
+          uint16_t *out_pixel = (uint16_t *)&out[(y * rowbytes) + (3 * sizeof(uint16_t) * x)];
 
-          *((uint16_t *)&R_plane8[(x * 2) + (y * R_rowbytes)]) = (uint16_t)CLAMP(pixel[0] * max_channel_f, 0, max_channel_f);
-          *((uint16_t *)&G_plane8[(x * 2) + (y * G_rowbytes)]) = (uint16_t)CLAMP(pixel[1] * max_channel_f, 0, max_channel_f);
-          *((uint16_t *)&B_plane8[(x * 2) + (y * B_rowbytes)]) = (uint16_t)CLAMP(pixel[2] * max_channel_f, 0, max_channel_f);
+          out_pixel[0] = (uint16_t)CLAMP(in_pixel[0] * max_channel_f, 0, max_channel_f);
+          out_pixel[1] = (uint16_t)CLAMP(in_pixel[1] * max_channel_f, 0, max_channel_f);
+          out_pixel[2] = (uint16_t)CLAMP(in_pixel[2] * max_channel_f, 0, max_channel_f);
       }
     }
     break;
@@ -261,18 +270,20 @@ int write_image(struct dt_imageio_module_data_t *data,
   case 8: {
 #ifdef _OPENMP
 #pragma omp parallel for simd default(none) \
-  dt_omp_firstprivate(in_data, width, height, R_plane8, G_plane8, B_plane8, \
-                      R_rowbytes, G_rowbytes, B_rowbytes, max_channel_f) \
+  dt_omp_firstprivate(in_data, width, height, out, rowbytes, max_channel_f) \
   schedule(simd:static) \
   collapse(2)
 #endif
-    for (size_t y = 0; y < height; y++) {
-      for (size_t x = 0; x < width; x++) {
-          const float *pixel = &in_data[(size_t)4 * ((y * width) + x)];
+    for (size_t y = 0; y < height; y++)
+    {
+      for (size_t x = 0; x < width; x++)
+      {
+          const float *in_pixel = &in_data[(size_t)4 * ((y * width) + x)];
+          uint8_t *out_pixel = (uint8_t *)&out[(y * rowbytes) + (3 * sizeof(uint8_t) * x)];
 
-          R_plane8[x + (y * R_rowbytes)] = (uint8_t)CLAMP(pixel[0] * max_channel_f, 0, max_channel_f);
-          G_plane8[x + (y * G_rowbytes)] = (uint8_t)CLAMP(pixel[1] * max_channel_f, 0, max_channel_f);
-          B_plane8[x + (y * B_rowbytes)] = (uint8_t)CLAMP(pixel[2] * max_channel_f, 0, max_channel_f);
+          out_pixel[0] = (uint8_t)CLAMP(in_pixel[0] * max_channel_f, 0, max_channel_f);
+          out_pixel[1] = (uint8_t)CLAMP(in_pixel[1] * max_channel_f, 0, max_channel_f);
+          out_pixel[2] = (uint8_t)CLAMP(in_pixel[2] * max_channel_f, 0, max_channel_f);
       }
     }
     break;
@@ -283,6 +294,8 @@ int write_image(struct dt_imageio_module_data_t *data,
     goto out;
   }
 
+  avifImageRGBToYUV(image, &rgb);
+
   if (imgid > 0) {
     avifNclxColorProfile nclx = {
         .colourPrimaries = AVIF_NCLX_COLOUR_PRIMARIES_UNKNOWN,
@@ -291,18 +304,26 @@ int write_image(struct dt_imageio_module_data_t *data,
     switch (over_type) {
       case DT_COLORSPACE_SRGB:
         nclx = (avifNclxColorProfile) {
-          .colourPrimaries = AVIF_NCLX_COLOUR_PRIMARIES_SRGB,
+          .colourPrimaries = AVIF_NCLX_COLOUR_PRIMARIES_BT709,
           .transferCharacteristics = AVIF_NCLX_TRANSFER_CHARACTERISTICS_SRGB,
-          .matrixCoefficients = AVIF_NCLX_MATRIX_COEFFICIENTS_SRGB,
+          .matrixCoefficients = AVIF_NCLX_MATRIX_COEFFICIENTS_BT709,
+#if AVIF_VERSION > 700
+          .range = AVIF_RANGE_FULL,
+#else
           .fullRangeFlag = AVIF_NCLX_FULL_RANGE,
+#endif
         };
         break;
       case DT_COLORSPACE_REC709:
         nclx = (avifNclxColorProfile) {
           .colourPrimaries = AVIF_NCLX_COLOUR_PRIMARIES_BT709,
-          .transferCharacteristics = AVIF_NCLX_TRANSFER_CHARACTERISTICS_GAMMA22,
+          .transferCharacteristics = AVIF_NCLX_TRANSFER_CHARACTERISTICS_BT470M,
           .matrixCoefficients = AVIF_NCLX_MATRIX_COEFFICIENTS_BT709,
+#if AVIF_VERSION > 700
+          .range = AVIF_RANGE_FULL,
+#else
           .fullRangeFlag = AVIF_NCLX_FULL_RANGE,
+#endif
         };
         break;
       case DT_COLORSPACE_LIN_REC709:
@@ -310,7 +331,11 @@ int write_image(struct dt_imageio_module_data_t *data,
           .colourPrimaries = AVIF_NCLX_COLOUR_PRIMARIES_BT709,
           .transferCharacteristics = AVIF_NCLX_TRANSFER_CHARACTERISTICS_LINEAR,
           .matrixCoefficients = AVIF_NCLX_MATRIX_COEFFICIENTS_BT709,
+#if AVIF_VERSION > 700
+          .range = AVIF_RANGE_FULL,
+#else
           .fullRangeFlag = AVIF_NCLX_FULL_RANGE,
+#endif
         };
         break;
       case DT_COLORSPACE_LIN_REC2020:
@@ -318,39 +343,59 @@ int write_image(struct dt_imageio_module_data_t *data,
           .colourPrimaries = AVIF_NCLX_COLOUR_PRIMARIES_BT2020,
           .transferCharacteristics = AVIF_NCLX_TRANSFER_CHARACTERISTICS_LINEAR,
           .matrixCoefficients = AVIF_NCLX_MATRIX_COEFFICIENTS_BT2020_NCL,
+#if AVIF_VERSION > 700
+          .range = AVIF_RANGE_FULL,
+#else
           .fullRangeFlag = AVIF_NCLX_FULL_RANGE,
+#endif
         };
         break;
       case DT_COLORSPACE_PQ_REC2020:
         nclx = (avifNclxColorProfile) {
           .colourPrimaries = AVIF_NCLX_COLOUR_PRIMARIES_BT2020,
-          .transferCharacteristics = AVIF_NCLX_TRANSFER_CHARACTERISTICS_BT2100_PQ,
+          .transferCharacteristics = AVIF_NCLX_TRANSFER_CHARACTERISTICS_SMPTE2084,
           .matrixCoefficients = AVIF_NCLX_MATRIX_COEFFICIENTS_BT2020_NCL,
+#if AVIF_VERSION > 700
+          .range = AVIF_RANGE_FULL,
+#else
           .fullRangeFlag = AVIF_NCLX_FULL_RANGE,
+#endif
         };
         break;
       case DT_COLORSPACE_HLG_REC2020:
         nclx = (avifNclxColorProfile) {
           .colourPrimaries = AVIF_NCLX_COLOUR_PRIMARIES_BT2020,
-          .transferCharacteristics = AVIF_NCLX_TRANSFER_CHARACTERISTICS_BT2100_HLG,
+          .transferCharacteristics = AVIF_NCLX_TRANSFER_CHARACTERISTICS_HLG,
           .matrixCoefficients = AVIF_NCLX_MATRIX_COEFFICIENTS_BT2020_NCL,
+#if AVIF_VERSION > 700
+          .range = AVIF_RANGE_FULL,
+#else
           .fullRangeFlag = AVIF_NCLX_FULL_RANGE,
+#endif
         };
         break;
       case DT_COLORSPACE_PQ_P3:
         nclx = (avifNclxColorProfile) {
-          .colourPrimaries = AVIF_NCLX_COLOUR_PRIMARIES_P3,
-          .transferCharacteristics = AVIF_NCLX_TRANSFER_CHARACTERISTICS_BT2100_PQ,
+          .colourPrimaries = AVIF_NCLX_COLOUR_PRIMARIES_SMPTE432,
+          .transferCharacteristics = AVIF_NCLX_TRANSFER_CHARACTERISTICS_SMPTE2084,
           .matrixCoefficients = AVIF_NCLX_MATRIX_COEFFICIENTS_CHROMA_DERIVED_NCL,
+#if AVIF_VERSION > 700
+          .range = AVIF_RANGE_FULL,
+#else
           .fullRangeFlag = AVIF_NCLX_FULL_RANGE,
+#endif
         };
         break;
       case DT_COLORSPACE_HLG_P3:
         nclx = (avifNclxColorProfile) {
-          .colourPrimaries = AVIF_NCLX_COLOUR_PRIMARIES_P3,
-          .transferCharacteristics = AVIF_NCLX_TRANSFER_CHARACTERISTICS_BT2100_HLG,
+          .colourPrimaries = AVIF_NCLX_COLOUR_PRIMARIES_SMPTE432,
+          .transferCharacteristics = AVIF_NCLX_TRANSFER_CHARACTERISTICS_HLG,
           .matrixCoefficients = AVIF_NCLX_MATRIX_COEFFICIENTS_CHROMA_DERIVED_NCL,
+#if AVIF_VERSION > 700
+          .range = AVIF_RANGE_FULL,
+#else
           .fullRangeFlag = AVIF_NCLX_FULL_RANGE,
+#endif
         };
         break;
       default:
@@ -399,7 +444,8 @@ int write_image(struct dt_imageio_module_data_t *data,
 
   switch (d->compression_type) {
   case AVIF_COMP_LOSSLESS:
-    encoder->speed = AVIF_SPEED_SLOWEST;
+    /* It isn't recommend to use the extremities */
+    encoder->speed = AVIF_SPEED_SLOWEST + 1;
 
     encoder->minQuantizer = AVIF_QUANTIZER_LOSSLESS;
     encoder->maxQuantizer = AVIF_QUANTIZER_LOSSLESS;
@@ -427,21 +473,14 @@ int write_image(struct dt_imageio_module_data_t *data,
    */
   switch (d->tiling) {
   case AVIF_TILING_ON: {
-    size_t width_tile_size = 512;
-    size_t height_tile_size = 512;
+    size_t width_tile_size  = AVIF_DEFAULT_TILE_SIZE;
+    size_t height_tile_size = AVIF_DEFAULT_TILE_SIZE;
 
     if (width >= 4096) {
-      width_tile_size = 1024;
+        width_tile_size = AVIF_MAX_TILE_SIZE;
     }
     if (height >= 4096) {
-      height_tile_size = 1024;
-    }
-
-    if (width >= 8192) {
-      width_tile_size = 2048;
-    }
-    if (height >= 8192) {
-      height_tile_size = 2048;
+        height_tile_size = AVIF_MAX_TILE_SIZE;
     }
 
     encoder->tileColsLog2 = flp2(width / width_tile_size);
@@ -502,6 +541,7 @@ int write_image(struct dt_imageio_module_data_t *data,
 
   rc = 0; /* success */
 out:
+  avifRGBImageFreePixels(&rgb);
   avifImageDestroy(image);
   avifEncoderDestroy(encoder);
   avifRWDataFree(&output);
@@ -690,8 +730,8 @@ void gui_init(dt_imageio_module_format_t *self)
   gtk_widget_set_tooltip_text(gui->tiling,
           _("tile an image into segments.\n"
             "\n"
-            "makes encoding a lot faster. the impact on quality reduction "
-            "is negligible."));
+            "makes encoding faster. the impact on quality reduction "
+            "is negligible, but increases the file size."));
 
   gtk_box_pack_start(GTK_BOX(self->widget),
                      gui->tiling,

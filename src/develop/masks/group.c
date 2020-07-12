@@ -1,6 +1,6 @@
 /*
     This file is part of darktable,
-    copyright (c) 2012 aldric renaudin.
+    Copyright (C) 2013-2020 darktable developers.
 
     darktable is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -326,9 +326,7 @@ static int dt_group_get_mask(dt_iop_module_t *module, dt_dev_pixelpipe_iop_t *pi
   if(nb_ok == 0) goto error;
 
   // now we get the min, max, width, height of the final mask
-  int l, r, t, b;
-  l = t = INT_MAX;
-  r = b = INT_MIN;
+  int l = INT_MAX, r = INT_MIN, t = INT_MAX, b = INT_MIN;
   for(int i = 0; i < nb; i++)
   {
     l = MIN(l, px[i]);

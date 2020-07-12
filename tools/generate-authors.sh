@@ -1,4 +1,4 @@
-#/bin/bash
+#!/bin/bash
 #
 #   This file is part of darktable,
 #   copyright (c) 2019 pascal obry
@@ -49,7 +49,8 @@ ALL_DEVELOPERS=("Aldric Renaudin"
                 "Tobias Ellinghaus"
                 "Ulrich Pegelow"
                 "johannes hanika"
-                "parafin")
+                "parafin"
+                "Aurélien PIERRE")
 
 function short-log()
 {
